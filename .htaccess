@@ -1,0 +1,24 @@
+# Enable the Rewrite Engine
+RewriteEngine On
+
+# Deny access to storage and Config directories
+RewriteRule ^(Storage|Config)/ - [F,L]
+
+# Deny access to .db files
+<FilesMatch "\.db$">
+    Require all denied
+</FilesMatch>
+
+# Deny access to .db files
+<FilesMatch "\.cache$">
+    Require all denied
+</FilesMatch>
+
+# Deny access to hidden files (files starting with .)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+
+
+

@@ -1,0 +1,26 @@
+{
+    "name": "jiframework/jiframework",
+    "description": "A lightweight and efficient PHP framework designed to simplify web application development",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jahurul Islam",
+            "email": "info@jahurul.in"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "JiFramework\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JiFramework\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable"
+} 
