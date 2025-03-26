@@ -35,7 +35,7 @@ Setting up JiFramework is straightforward. Follow the steps below to install the
    Add JiFramework to your project by running:
 
    ```bash
-   composer require jiframework/jiframework
+   composer require jahurul1/ji-framework
    ```
 
    This command will install JiFramework and its dependencies into the `vendor` directory.
