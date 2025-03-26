@@ -31,7 +31,7 @@ A lightweight and efficient PHP framework designed to simplify web application d
 ### Via Composer
 
 ```bash
-composer require jiframework/jiframework
+composer require jahurul1/ji-framework
 ```
 
 ### Manual Download
