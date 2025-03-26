@@ -122,19 +122,26 @@ For the most comprehensive and up-to-date documentation, always refer to the off
 
 JiFramework includes the following components:
 
+- **AccessControl** - Manage user access permissions and roles
 - **App** - Application container [(docs)](docs/components/app.md)
-- **Auth** - Authentication system 
-- **Cache Manager** - Data caching
-- **QueryBuilder** - Database interactions [(docs)](docs/components/query-builder.md)
-- **ErrorPageHandler** - Error management
-- **Logger** - Application logging
-- **HttpRequestHelper** - HTTP requests
-- **Encryption** - Data encryption
-- **RateLimiter** - Request rate limiting
-- **SessionManager** - Session management
-- **FileManager** - File operations
-- **StringHelper** - String utilities
-- **Validator** - Data validation
+- **Auth** - User authentication and management
+- **Cache Manager** - Efficient caching layer
+- **DateTimeHelper** - Simplify DateTime operations
+- **Encryption** - Secure data encryption/decryption
+- **EnvironmentHelper** - Manage environment-specific settings
+- **ErrorPageHandler** - User-friendly error page handling
+- **ExecutionTime** - Measure and manage execution timing
+- **FileManager** - Handle file operations easily
+- **HttpRequestHelper** - Simplified HTTP request handling
+- **LanguageManager** - Multilingual application support
+- **Logger** - Application logging system
+- **PaginationHelper** - Easy pagination of results
+- **QueryBuilder** - Simplified database queries [(docs)](docs/components/query-builder.md)
+- **RateLimiter** - Limit requests for security and performance
+- **SessionManager** - Secure session management
+- **StringHelper** - String utilities and helpers
+- **UrlHelper** - URL parsing and building
+- **Validator** - Easy and secure input validation
 
 For complete documentation on all components, visit [jiframework.com](https://jiframework.com/).
 
