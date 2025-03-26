@@ -20,17 +20,7 @@ Setting up JiFramework is straightforward. Follow the steps below to install the
    cd my_project
    ```
 
-2. **Initialize Composer**
-
-   Run the following command to initialize Composer in your project directory:
-
-   ```bash
-   composer init
-   ```
-
-   Follow the prompts to generate a `composer.json` file for your project.
-
-3. **Require JiFramework via Composer**
+2. **Require JiFramework via Composer**
 
    Add JiFramework to your project by running:
 
@@ -40,7 +30,7 @@ Setting up JiFramework is straightforward. Follow the steps below to install the
 
    This command will install JiFramework and its dependencies into the `vendor` directory.
 
-4. **Include the Autoloader in Your Project**
+3. **Include the Autoloader in Your Project**
 
    In your application's entry point (e.g., `index.php`), include Composer's autoloader:
 
@@ -89,48 +79,6 @@ echo "JiFramework is installed successfully!";
 
 Run this file from your command line or web browser to check that no errors appear.
 
-## Creating a Basic Project Structure
-
-While JiFramework doesn't enforce a strict directory structure, we recommend the following organization for your project:
-
-```
-my_project/
-├── config/                 # Configuration files
-├── public/                 # Publicly accessible files
-│   └── index.php           # Main entry point
-├── src/                    # Application source code
-│   ├── Controllers/        # Controller classes
-│   ├── Models/             # Model classes
-│   └── Views/              # View templates
-├── vendor/                 # Dependencies (managed by Composer)
-└── composer.json           # Composer configuration
-```
-
-Create a simple `public/index.php` file:
-
-```php
-<?php
-// Define the application root directory
-define('APP_ROOT', dirname(__DIR__));
-
-// Require the Composer autoloader
-require APP_ROOT . '/vendor/autoload.php';
-
-// Initialize the app
-$app = new JIFramework\Core\App\App();
-
-// Your application code starts here
-// ...
-
-// Example route handling
-$uri = $_SERVER['REQUEST_URI'];
-
-if ($uri === '/') {
-    echo "Welcome to my JiFramework application!";
-} else {
-    echo "Page not found!";
-}
-```
 
 ## Next Steps
 
