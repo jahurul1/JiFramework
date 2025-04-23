@@ -95,7 +95,7 @@ class Config
      * Project base path configuration
      */
     // Base path of the project
-    const BASE_PATH = __DIR__ . '/../../../';
+    const BASE_PATH = __DIR__ . '/../../';
     // Storage path 
     const STORAGE_PATH = self::BASE_PATH . 'src/Storage/';
 
