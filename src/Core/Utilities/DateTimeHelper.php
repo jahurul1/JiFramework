@@ -9,15 +9,17 @@ use Exception;
 class DateTimeHelper
 {
     /**
-	 * Retrieves the application's default timezone.
-	 *
-	 * This function returns the application's default timezone as defined by the
-	 * @return string The application's default timezone.
-	 */
+     * Retrieves the application's default timezone.
+     *
+     * This function returns the application's default timezone as defined by the
+     * Config class, or falls back to the system default timezone.
+     *
+     * @return string The application's default timezone.
+     */
     public static function getDefaultTimezone(): string
     {   
-        // Check if the TIMEZONE constant is defined in the Config class
-        if (Config::TIMEZONE) {
+        // Check if the TIMEZONE constant is defined and not empty in the Config class
+        if (defined('JiFramework\Config\Config::TIMEZONE') && !empty(Config::TIMEZONE)) {
             return Config::TIMEZONE;
         } else {
             return date_default_timezone_get();
@@ -51,22 +53,25 @@ class DateTimeHelper
      */
     public static function timestampToDatetime($timestamp, $format = 'Y-m-d H:i:s')
     {
-        return date($format, $timestamp);
+        // Use the configured timezone instead of system timezone
+        $dateTime = new DateTime("@$timestamp");
+        $dateTime->setTimezone(new DateTimeZone(self::getDefaultTimezone()));
+        return $dateTime->format($format);
     }
 
-    /**
-	 * Converts a date string from one format to another, with an optional source format.
-	 *
-	 * If a source format is provided, the function attempts to parse the date string according to
-	 * that format before converting it to the target format. If no source format is specified,
-	 * it assumes the date string is in a format understandable by strtotime().
-	 *
-	 * @param string $targetFormat The target date format, as specified by PHP's date() function.
-	 * @param string $dateString The input date string to be converted.
-	 * @param string $sourceFormat Optional. The source date format. If provided, used to parse $dateString.
-	 * @return string|false The formatted date string, or false if input date is invalid or conversion fails.
-	 */
-	public function formatDate($targetFormat, $dateString, $sourceFormat = '') {
+        /**
+     * Converts a date string from one format to another, with an optional source format.
+     *
+     * If a source format is provided, the function attempts to parse the date string according to
+     * that format before converting it to the target format. If no source format is specified,
+     * it assumes the date string is in a format understandable by strtotime().
+     *
+     * @param string $targetFormat The target date format, as specified by PHP's date() function.
+     * @param string $dateString The input date string to be converted.
+     * @param string $sourceFormat Optional. The source date format. If provided, used to parse $dateString.
+     * @return string|false The formatted date string, or false if input date is invalid or conversion fails.
+     */
+    public static function formatDate($targetFormat, $dateString, $sourceFormat = '') {
 		// Create DateTime object from the source format if provided
 		if (!empty($sourceFormat)) {
 			$date = DateTime::createFromFormat($sourceFormat, $dateString);
@@ -75,19 +80,15 @@ class DateTimeHelper
 				return false; // Indicate failure to parse the date
 			}
 		} else {
-			// Use strtotime for conversion if no source format is provided
-			$timestamp = strtotime($dateString);
-			if ($timestamp === false) {
+			// Use DateTime constructor for conversion if no source format is provided
+			try {
+				$date = new DateTime($dateString);
+			} catch (Exception $e) {
 				return false; // Indicate failure to parse the date
 			}
-			$date = new DateTime("@$timestamp");
 		}
-		
-		// Set the default timezone from the configuration
-		$defaultTimezone = $this->getDefaultTimezone();
-		$date->setTimezone(new DateTimeZone($defaultTimezone));
 
-		// Format the date and return
+		// Format the date and return (no timezone conversion - preserve original time)
 		return $date->format($targetFormat);
 	}
 
@@ -294,6 +295,34 @@ class DateTimeHelper
     public static function getSupportedTimezones()
     {
         return DateTimeZone::listIdentifiers();
+    }
+
+    /**
+     * Get the current datetime string using the default timezone.
+     *
+     * @param string $format The desired output format.
+     * @return string        The current datetime string.
+     */
+    public static function now($format = 'Y-m-d H:i:s')
+    {
+        return self::getCurrentDatetime($format);
+    }
+
+    /**
+     * Format a date for human-readable display.
+     *
+     * @param string $date   The date string to format.
+     * @param string $format The input date format.
+     * @return string        The formatted date string.
+     * @throws Exception     If the date cannot be parsed.
+     */
+    public static function formatForDisplay($date, $format = 'Y-m-d H:i:s')
+    {
+        $dateTime = DateTime::createFromFormat($format, $date);
+        if ($dateTime === false) {
+            throw new Exception("Invalid date format.");
+        }
+        return $dateTime->format('M j, Y g:i A'); // e.g., "Jan 15, 2024 3:30 PM"
     }
 }
 
