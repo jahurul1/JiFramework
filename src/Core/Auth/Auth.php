@@ -82,6 +82,27 @@ class Auth
     }
 
     /**
+     * Log in an admin using ID.
+     * 
+     * @param int $id
+     * @return bool
+     */
+    public function adminLoginById($id)
+    {
+        $admin = $this->db->table('admin')
+                          ->where('id', $id)
+                          ->fetch();
+
+        if ($admin) {
+            $_SESSION[$this->adminSessionKey] = $admin['id'];
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Log in a user.
      *
      * @param string $email
@@ -101,6 +122,27 @@ class Auth
             if ($remember) {
                 $this->setRememberMeToken($user['id'], 'user');
             }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Log in a user using ID.
+     * 
+     * @param int $id
+     * @return bool
+     */
+    public function userLoginById($id)
+    {
+        $user = $this->db->table('users')
+                         ->where('id', $id)
+                         ->fetch();
+
+        if ($user) {
+            $_SESSION[$this->userSessionKey] = $user['id'];
 
             return true;
         }

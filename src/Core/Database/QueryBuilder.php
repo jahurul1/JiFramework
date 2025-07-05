@@ -224,6 +224,61 @@ class QueryBuilder
     }
 
     /**
+     * Add a whereIn clause to the query.
+     *
+     * @param string $column
+     * @param array $values
+     * @param string $boolean
+     * @param bool $not
+     * @return static
+     */
+    public function whereIn($column, array $values, $boolean = 'AND', $not = false)
+    {
+        if (empty($values)) {
+            // If no values, make the condition always false/true
+            $sql = $not ? '1=1' : '1=0';
+            $this->wheres[] = [
+                'column'   => $sql,
+                'operator' => '',
+                'param'    => '',
+                'boolean'  => $boolean,
+            ];
+            return $this;
+        }
+
+        $params = [];
+        foreach ($values as $i => $value) {
+            $param = $this->generateParameterName($column . $i);
+            $params[] = $param;
+            $this->bindings[$param] = $value;
+        }
+        $inClause = implode(', ', $params);
+        $operator = $not ? 'NOT IN' : 'IN';
+
+        $this->wheres[] = [
+            'column'   => $column,
+            'operator' => $operator . ' (' . $inClause . ')',
+            'param'    => '',
+            'boolean'  => $boolean,
+        ];
+        return $this;
+    }
+
+    /**
+     * Add a whereNotIn clause to the query.
+     *
+     * @param string $column
+     * @param array $values
+     * @param string $boolean
+     * @return static
+     */
+    public function whereNotIn($column, array $values, $boolean = 'AND')
+    {
+        return $this->whereIn($column, $values, $boolean, true);
+    }
+
+
+    /**
      * Add a join clause to the query.
      *
      * @param string $table
@@ -471,6 +526,31 @@ class QueryBuilder
         $result = $this->fetch();
         return (int)($result['count'] ?? 0);
     }
+
+    /**
+     * Pluck values of a single column from the result set.
+     *
+     * @param string $column
+     * @return array
+     * @throws \Exception
+     */
+    public function pluck($column)
+    {
+        $this->select($column);
+
+        $results = $this->get();
+
+        // Support for alias (e.g. 'id as timeline_id')
+        $columnKey = $column;
+        if (stripos($column, ' as ') !== false) {
+            $parts = preg_split('/\s+as\s+/i', $column);
+            $columnKey = trim(end($parts));
+        }
+
+        // Return only the values of the selected column as a flat array
+        return array_column($results, $columnKey);
+    }
+
 
     /**
      * Insert a new record into the database.
@@ -816,5 +896,3 @@ class QueryBuilder
         return ':' . str_replace('.', '_', $column) . '_' . count($this->bindings);
     }
 }
-
-

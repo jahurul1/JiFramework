@@ -29,7 +29,7 @@ class Config
      *
      * Specifies the email address of the system administrator.
      */
-    const ADMIN_EMAIL = 'jahurulce@gmail.com';
+    const ADMIN_EMAIL = 'admin@demo.com'; // TODO: Change this to your email address
 
     /**
      * Default Time Zone
@@ -43,7 +43,7 @@ class Config
      */
     public static $primaryDatabase = [
         'host'       => 'localhost',
-        'database'   => 'backoffice_jahurul_in',
+        'database'   => 'jiframework_upgrade',
         'username'   => 'root',
         'password'   => '',
         'driver'     => 'mysql',

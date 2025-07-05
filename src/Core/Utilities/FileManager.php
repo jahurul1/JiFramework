@@ -11,7 +11,7 @@ class FileManager
      * Extract detailed information from a single file.
      *
      * @param array $file The file array from $_FILES.
-     * @return object     An object containing enhanced file information.
+     * @return array      An array containing enhanced file information.
      * @throws Exception If the file is not valid.
      */
     public function extractFileInfo(array $file)
@@ -50,14 +50,14 @@ class FileManager
             'hash'             => $fileHash,
         ];
 
-        return (object) $fileInfoEnhanced;
+        return $fileInfoEnhanced;
     }
 
     /**
      * Extract detailed information from multiple files.
      *
      * @param array $files The files array from $_FILES.
-     * @return array       An array of objects containing enhanced file information.
+     * @return array       An array of arrays containing enhanced file information.
      * @throws Exception If any file is not valid.
      */
     public function extractMultipleFileInfo(array $files)
@@ -100,7 +100,7 @@ class FileManager
                 'hash'             => $fileHash,
             ];
 
-            $fileInfos[] = (object) $fileInfo;
+            $fileInfos[] = $fileInfo;
         }
 
         return $fileInfos;
@@ -272,7 +272,7 @@ class FileManager
         }
 
         // Validate the file size
-        if ($fileInfo->size > $maxSize) {
+        if ($fileInfo['size'] > $maxSize) {
             return [
                 'success' => false,
                 'error' => 'File size exceeds the maximum allowed limit.'
@@ -280,7 +280,7 @@ class FileManager
         }
 
         // Validate the file type
-        if (!in_array($fileInfo->actualType, $allowedTypes)) {
+        if (!in_array($fileInfo['actualType'], $allowedTypes)) {
             return [
                 'success' => false,
                 'error' => 'Invalid file type.'
@@ -288,11 +288,11 @@ class FileManager
         }
 
         // Generate a unique file name
-        $uniqueName = uniqid('img_', true) . '.' . $fileInfo->extension;
+        $uniqueName = uniqid('img_', true) . '.' . $fileInfo['extension'];
         $savePath = rtrim($destination, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $uniqueName;
 
         // Move the uploaded file to the destination
-        if (!move_uploaded_file($fileInfo->tmpName, $savePath)) {
+        if (!move_uploaded_file($fileInfo['tmpName'], $savePath)) {
             return [
                 'success' => false,
                 'error' => 'Failed to save the uploaded file.'
@@ -300,8 +300,8 @@ class FileManager
         }
 
         // Update file info with the new save path and unique name
-        $fileInfo->savedPath = $savePath;
-        $fileInfo->uniqueName = $uniqueName;
+        $fileInfo['savedPath'] = $savePath;
+        $fileInfo['uniqueName'] = $uniqueName;
 
         // Return success and file info
         return [
@@ -393,5 +393,3 @@ class FileManager
     }
 
 }
-
-

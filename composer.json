@@ -3,7 +3,7 @@
     "description": "A lightweight and efficient PHP framework designed to simplify web application development. Features timezone-aware DateTimeHelper, database query builder, security tools, and comprehensive utility classes.",
     "type": "library",
     "license": "MIT",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "homepage": "https://github.com/jahurul1/JiFramework",
     "keywords": ["framework", "php", "datetime", "database", "security", "utilities", "timezone", "query-builder"],
     "authors": [

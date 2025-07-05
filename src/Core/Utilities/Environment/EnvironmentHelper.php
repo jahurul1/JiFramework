@@ -20,7 +20,6 @@ class EnvironmentHelper
      */
     public function getUserIp()
     {
-        return '82.163.205.2';
         // Check for shared internet/ISP IP
         if (!empty($_SERVER['HTTP_CLIENT_IP']) && filter_var($_SERVER['HTTP_CLIENT_IP'], FILTER_VALIDATE_IP)) {
             return $_SERVER['HTTP_CLIENT_IP'];
