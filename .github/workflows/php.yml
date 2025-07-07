@@ -33,8 +33,8 @@ jobs:
       uses: mirromutth/mysql-action@v1.1
       with:
         mysql version: '5.7'
-        mysql database: 'jiframework_test'
-        mysql root password: 'password'
+        mysql database: 'jiframework_upgrade'
+        mysql root password: ''
 
     - name: Run test suite
       run: php tests/run_tests.php
