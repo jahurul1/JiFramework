@@ -2,249 +2,342 @@
 namespace JiFramework\Core\Security;
 
 use JiFramework\Config\Config;
-use JiFramework\Core\Utilities\Environment\EnvironmentHelper;
+use JiFramework\Core\Utilities\Request;
+use JiFramework\Exceptions\HttpException;
 use PDO;
 use PDOException;
 
 class RateLimiter
 {
-    /**
-     * @var PDO The PDO instance for SQLite connection.
-     */
-    protected $pdo;
+    // =========================================================================
+    // Internal state
+    // =========================================================================
+
+    private ?PDO $pdo = null;
+
+    private Request $request;
 
     /**
-     * @var EnvironmentHelper
+     * Set to true when the SQLite backend fails to initialise.
+     * Causes enforceRateLimit() to fail open (allow all requests) rather than
+     * crashing the application because of a storage problem.
      */
-    protected $environmentHelper;
+    private bool $disabled = false;
+
+    // =========================================================================
+    // Bootstrap
+    // =========================================================================
 
     /**
-     * Constructor to initialize the SQLite database connection.
-     *
-     * @param EnvironmentHelper $environmentHelper
-     * @throws \Exception If the PDO connection fails.
+     * @param Request $request
      */
-    public function __construct(EnvironmentHelper $environmentHelper)
+    public function __construct(Request $request)
     {
-        $this->environmentHelper = $environmentHelper;
-        $databasePath = Config::RATE_LIMIT_DATABASE_PATH;
+        $this->request = $request;
 
-        // Ensure the directory for the database file exists
-        $directory = dirname($databasePath);
-        if (!is_dir($directory)) {
-            if (!mkdir($directory, 0755, true)) {
-                throw new \Exception("Unable to create directory for rate limit database: {$directory}");
-            }
+        // Skip all database work when rate limiting is turned off in config
+        if (!Config::$rateLimitEnabled) {
+            return;
         }
 
-        // Initialize the PDO connection
+        $databasePath = Config::$rateLimitDatabasePath;
+        $directory    = dirname($databasePath);
+
+        if (!is_dir($directory) && !@mkdir($directory, 0755, true)) {
+            trigger_error('[RateLimiter] Cannot create directory: ' . $directory, E_USER_WARNING);
+            $this->disabled = true;
+            return;
+        }
+
         try {
             $this->pdo = new PDO('sqlite:' . $databasePath);
             $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-            // Set the PRAGMA options for performance optimization
             $this->pdo->exec('PRAGMA journal_mode = WAL;');
             $this->pdo->exec('PRAGMA synchronous = NORMAL;');
-
-            // Create the tables if they do not exist
             $this->createTablesIfNotExists();
 
-            // Perform garbage collection
-            $this->performGarbageCollection();
+            // Probabilistic GC: run on roughly 1% of requests to keep the DB tidy
+            // without adding overhead on every request.
+            if (random_int(1, 100) === 1) {
+                $this->performGarbageCollection();
+            }
 
         } catch (PDOException $e) {
-            throw new \Exception('SQLite connection error: ' . $e->getMessage());
+            trigger_error('[RateLimiter] SQLite error: ' . $e->getMessage(), E_USER_WARNING);
+            $this->disabled = true;
+        }
+    }
+
+    // =========================================================================
+    // Core enforcement
+    // =========================================================================
+
+    /**
+     * Enforce the rate limit for the current request.
+     *
+     * Call this once per request (App::__construct() already does this automatically).
+     * Does nothing when rate limiting is disabled or the database backend is unavailable.
+     *
+     * @throws HttpException 429 when the client is banned or has exceeded the limit.
+     */
+    public function enforceRateLimit(): void
+    {
+        if (!Config::$rateLimitEnabled || $this->disabled) {
+            return;
+        }
+
+        $ip = $this->getIpAddress();
+
+        // Single query covers both "is banned?" and "when does the ban expire?"
+        $ban = $this->fetchActiveBan($ip);
+
+        if ($ban !== null) {
+            $remaining = max(0, $ban['ban_expires'] - time());
+            throw new HttpException(
+                429,
+                'You are banned. Try again in ' . $remaining . ' second' . ($remaining !== 1 ? 's' : '') . '.'
+            );
+        }
+
+        if (!$this->isAllowed($ip)) {
+            if (Config::$rateLimitBanEnabled) {
+                $this->banIpInternal($ip);
+                $duration = Config::$rateLimitBanDuration;
+                throw new HttpException(
+                    429,
+                    'Rate limit exceeded. You are banned for ' . $duration . ' second' . ($duration !== 1 ? 's' : '') . '.'
+                );
+            }
+
+            throw new HttpException(429, 'Too many requests. Please try again later.');
+        }
+
+        $this->logRequest($ip);
+    }
+
+    // =========================================================================
+    // Public API
+    // =========================================================================
+
+    /**
+     * Check whether an IP address is currently banned.
+     *
+     * @param string $ip
+     * @return bool
+     */
+    public function isBannedIp(string $ip): bool
+    {
+        if ($this->disabled || $this->pdo === null) {
+            return false;
+        }
+
+        return $this->fetchActiveBan($ip) !== null;
+    }
+
+    /**
+     * Manually ban an IP address.
+     *
+     * If the IP is already banned the existing ban is replaced (effectively
+     * extending or shortening it).
+     *
+     * @param string   $ip
+     * @param int|null $duration Seconds from now. Defaults to Config::$rateLimitBanDuration.
+     * @return bool True on success, false when the backend is unavailable.
+     */
+    public function banIp(string $ip, ?int $duration = null): bool
+    {
+        if ($this->disabled || $this->pdo === null) {
+            return false;
+        }
+
+        try {
+            $expires = time() + ($duration ?? Config::$rateLimitBanDuration);
+            $stmt    = $this->pdo->prepare('INSERT OR REPLACE INTO bans (ip_address, ban_expires) VALUES (:ip, :expires)');
+            $stmt->execute([':ip' => $ip, ':expires' => $expires]);
+            return true;
+        } catch (PDOException $e) {
+            return false;
         }
     }
 
     /**
-     * Create the required tables if they do not exist.
+     * Remove an active ban for an IP address.
+     * Safe to call when the IP is not banned — returns true in that case.
      *
-     * @return void
+     * @param string $ip
+     * @return bool True on success, false when the backend is unavailable.
      */
-    protected function createTablesIfNotExists()
+    public function unbanIp(string $ip): bool
     {
-        $sql = "
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip_address TEXT NOT NULL,
-            timestamp INTEGER NOT NULL
-        );
+        if ($this->disabled || $this->pdo === null) {
+            return false;
+        }
 
-        CREATE INDEX IF NOT EXISTS idx_requests_ip_timestamp ON requests (ip_address, timestamp);
-
-        CREATE TABLE IF NOT EXISTS bans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip_address TEXT NOT NULL UNIQUE,
-            ban_expires INTEGER NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_bans_ban_expires ON bans (ban_expires);
-        ";
-
-        $this->pdo->exec($sql);
-    }
-
-    /**
-     * Enforce the rate limit.
-     *
-     * @return void
-     */
-    public function enforceRateLimit()
-    {
-        if (Config::RATE_LIMIT_ENABLED) {
-            $ipAddress = $this->getIpAddress();
-
-            if ($this->isBanned($ipAddress)) {
-                $banExpires = $this->getBanExpiration($ipAddress);
-                $remainingBanTime = $banExpires - time();
-                http_response_code(429);
-                echo 'You are banned for ' . $remainingBanTime . ' seconds.';
-                exit();
-            }
-
-            if (!$this->isAllowed($ipAddress)) {
-                if (Config::RATE_LIMIT_BAN_ENABLED) {
-                    $this->banIp($ipAddress);
-                    http_response_code(429);
-                    echo 'You are banned for ' . Config::RATE_LIMIT_BAN_DURATION . ' seconds.';
-                    exit();
-                } else {
-                    http_response_code(429);
-                    echo 'Too many requests. Please try again later.';
-                    exit();
-                }
-            }
-
-            // Log the request
-            $this->logRequest($ipAddress);
+        try {
+            $this->pdo->prepare('DELETE FROM bans WHERE ip_address = :ip')->execute([':ip' => $ip]);
+            return true;
+        } catch (PDOException $e) {
+            return false;
         }
     }
 
     /**
-     * Check if the IP address is allowed to make a request.
+     * Get detailed ban information for an IP address.
+     * Returns null when the IP is not currently banned.
      *
-     * @param string $ipAddress
-     * @return bool
+     * @param string $ip
+     * @return array|null ['ip' => string, 'ban_expires' => int, 'seconds_remaining' => int]
      */
-    protected function isAllowed($ipAddress)
+    public function getBanInfo(string $ip): ?array
     {
-        $timeWindowStart = time() - Config::RATE_LIMIT_TIME_WINDOW;
+        if ($this->disabled || $this->pdo === null) {
+            return null;
+        }
 
-        $sql = "SELECT COUNT(*) FROM requests WHERE ip_address = :ip_address AND timestamp >= :time_window_start";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
-            ':ip_address' => $ipAddress,
-            ':time_window_start' => $timeWindowStart,
-        ]);
+        $ban = $this->fetchActiveBan($ip);
 
-        $requestCount = $stmt->fetchColumn();
+        if ($ban === null) {
+            return null;
+        }
 
-        return $requestCount < Config::RATE_LIMIT_REQUESTS;
+        return [
+            'ip'                => $ip,
+            'ban_expires'       => $ban['ban_expires'],
+            'seconds_remaining' => max(0, $ban['ban_expires'] - time()),
+        ];
     }
 
     /**
-     * Check if the IP address is currently banned.
+     * Get the number of requests remaining in the current time window.
      *
-     * @param string $ipAddress
-     * @return bool
+     * @param string|null $ip IP to check. Uses the current request IP when null.
+     * @return int Remaining requests. Returns the full limit when the backend is unavailable.
      */
-    protected function isBanned($ipAddress)
+    public function getRemainingRequests(?string $ip = null): int
     {
-        $currentTime = time();
+        if ($this->disabled || $this->pdo === null) {
+            return Config::$rateLimitRequests;
+        }
 
-        $sql = "SELECT ban_expires FROM bans WHERE ip_address = :ip_address AND ban_expires > :current_time LIMIT 1";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
-            ':ip_address' => $ipAddress,
-            ':current_time' => $currentTime,
-        ]);
+        $ip              = $ip ?? $this->getIpAddress();
+        $timeWindowStart = time() - Config::$rateLimitTimeWindow;
 
-        return $stmt->fetchColumn() !== false;
+        try {
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM requests WHERE ip_address = :ip AND timestamp >= :window');
+            $stmt->execute([':ip' => $ip, ':window' => $timeWindowStart]);
+            $used = (int) $stmt->fetchColumn();
+            return max(0, Config::$rateLimitRequests - $used);
+        } catch (PDOException $e) {
+            return Config::$rateLimitRequests;
+        }
     }
 
     /**
-     * Get the ban expiration timestamp for an IP address.
+     * Reset all rate limit data for an IP address (clears both request log and active ban).
      *
-     * @param string $ipAddress
-     * @return int|null
+     * @param string $ip
+     * @return bool True on success, false when the backend is unavailable.
      */
-    protected function getBanExpiration($ipAddress)
+    public function resetIp(string $ip): bool
     {
-        $sql = "SELECT ban_expires FROM bans WHERE ip_address = :ip_address LIMIT 1";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([':ip_address' => $ipAddress]);
+        if ($this->disabled || $this->pdo === null) {
+            return false;
+        }
 
-        $banExpires = $stmt->fetchColumn();
-        return $banExpires !== false ? (int)$banExpires : null;
+        try {
+            $this->pdo->beginTransaction();
+            $this->pdo->prepare('DELETE FROM requests WHERE ip_address = :ip')->execute([':ip' => $ip]);
+            $this->pdo->prepare('DELETE FROM bans WHERE ip_address = :ip')->execute([':ip' => $ip]);
+            $this->pdo->commit();
+            return true;
+        } catch (PDOException $e) {
+            $this->pdo->rollBack();
+            return false;
+        }
+    }
+
+    // =========================================================================
+    // Private — core logic
+    // =========================================================================
+
+    private function createTablesIfNotExists(): void
+    {
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS requests (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip_address TEXT    NOT NULL,
+                timestamp  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_requests_ip_timestamp ON requests (ip_address, timestamp);
+
+            CREATE TABLE IF NOT EXISTS bans (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip_address  TEXT    NOT NULL UNIQUE,
+                ban_expires INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_bans_ip ON bans (ip_address);
+        ");
     }
 
     /**
-     * Ban an IP address.
-     *
-     * @param string $ipAddress
-     * @return void
+     * Return true when the IP has fewer requests than the limit in the current window.
      */
-    protected function banIp($ipAddress)
+    private function isAllowed(string $ip): bool
     {
-        $banExpires = time() + Config::RATE_LIMIT_BAN_DURATION;
-
-        $sql = "INSERT OR REPLACE INTO bans (ip_address, ban_expires) VALUES (:ip_address, :ban_expires)";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
-            ':ip_address' => $ipAddress,
-            ':ban_expires' => $banExpires,
-        ]);
+        $timeWindowStart = time() - Config::$rateLimitTimeWindow;
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM requests WHERE ip_address = :ip AND timestamp >= :window');
+        $stmt->execute([':ip' => $ip, ':window' => $timeWindowStart]);
+        return (int) $stmt->fetchColumn() < Config::$rateLimitRequests;
     }
 
     /**
-     * Log a request from an IP address.
-     *
-     * @param string $ipAddress
-     * @return void
+     * Fetch an active (non-expired) ban row for the given IP.
+     * Returns null when the IP is not banned.
      */
-    protected function logRequest($ipAddress)
+    private function fetchActiveBan(string $ip): ?array
     {
-        $currentTime = time();
-
-        $sql = "INSERT INTO requests (ip_address, timestamp) VALUES (:ip_address, :timestamp)";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
-            ':ip_address' => $ipAddress,
-            ':timestamp' => $currentTime,
-        ]);
+        $stmt = $this->pdo->prepare('SELECT ban_expires FROM bans WHERE ip_address = :ip AND ban_expires > :now LIMIT 1');
+        $stmt->execute([':ip' => $ip, ':now' => time()]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row !== false ? $row : null;
     }
 
     /**
-     * Perform garbage collection to clean up old requests and expired bans.
-     *
-     * @return void
+     * Write a ban record for the given IP. Uses INSERT OR REPLACE so it is safe
+     * to call even when the IP is already banned.
      */
-    protected function performGarbageCollection()
+    private function banIpInternal(string $ip): void
     {
-        $timeWindowStart = time() - Config::RATE_LIMIT_TIME_WINDOW;
-        $currentTime = time();
-
-        // Delete old requests
-        $sqlRequests = "DELETE FROM requests WHERE timestamp < :time_window_start";
-        $stmtRequests = $this->pdo->prepare($sqlRequests);
-        $stmtRequests->execute([':time_window_start' => $timeWindowStart]);
-
-        // Delete expired bans
-        $sqlBans = "DELETE FROM bans WHERE ban_expires <= :current_time";
-        $stmtBans = $this->pdo->prepare($sqlBans);
-        $stmtBans->execute([':current_time' => $currentTime]);
+        $expires = time() + Config::$rateLimitBanDuration;
+        $stmt    = $this->pdo->prepare('INSERT OR REPLACE INTO bans (ip_address, ban_expires) VALUES (:ip, :expires)');
+        $stmt->execute([':ip' => $ip, ':expires' => $expires]);
     }
 
     /**
-     * Get the client's IP address.
-     *
-     * @return string
+     * Record a request timestamp for the given IP.
      */
-    protected function getIpAddress()
+    private function logRequest(string $ip): void
     {
-        return $this->environmentHelper->getUserIp();
+        $stmt = $this->pdo->prepare('INSERT INTO requests (ip_address, timestamp) VALUES (:ip, :ts)');
+        $stmt->execute([':ip' => $ip, ':ts' => time()]);
+    }
+
+    /**
+     * Delete expired request logs and expired bans.
+     * Called probabilistically — not on every request.
+     */
+    private function performGarbageCollection(): void
+    {
+        $windowStart = time() - Config::$rateLimitTimeWindow;
+        $this->pdo->prepare('DELETE FROM requests WHERE timestamp < :window')->execute([':window' => $windowStart]);
+        $this->pdo->prepare('DELETE FROM bans WHERE ban_expires <= :now')->execute([':now' => time()]);
+    }
+
+    /**
+     * Return the client IP address for the current request.
+     */
+    private function getIpAddress(): string
+    {
+        return $this->request->getClientIp();
     }
 }
-
-

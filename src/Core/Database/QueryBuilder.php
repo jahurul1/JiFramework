@@ -3,8 +3,8 @@ namespace JiFramework\Core\Database;
 
 use PDO;
 use PDOException;
-use Exception;
 use JiFramework\Core\Database\DatabaseConnection;
+use JiFramework\Exceptions\DatabaseException;
 
 class QueryBuilder
 {
@@ -105,6 +105,13 @@ class QueryBuilder
      * @var array
      */
     protected $rawBindings = [];
+
+    /**
+     * Whether to use SELECT DISTINCT.
+     *
+     * @var bool
+     */
+    protected $distinct = false;
 
     /**
      * Create a new QueryBuilder instance.
@@ -220,6 +227,10 @@ class QueryBuilder
      */
     public function orWhere($column, $operator = null, $value = null)
     {
+        if (func_num_args() === 2) {
+            $value    = $operator;
+            $operator = '=';
+        }
         return $this->where($column, $operator, $value, 'OR');
     }
 
@@ -418,6 +429,7 @@ class QueryBuilder
      */
     public function get()
     {
+        $sql = '';
         try {
             if ($this->rawSql !== null) {
                 $sql = $this->rawSql;
@@ -431,14 +443,11 @@ class QueryBuilder
             $this->bindValues($stmt, $bindings);
             $stmt->execute();
 
-            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            $this->reset();
-
-            return $results;
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database query error: " . $e->getMessage());
+            throw new DatabaseException("Database query error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        } finally {
+            $this->reset();
         }
     }
 
@@ -448,56 +457,23 @@ class QueryBuilder
      * @return array|false
      * @throws \Exception
      */
-    public function first() 
+    public function first(): ?array
     {
         $this->limit(1);
         $results = $this->get();
-        return $results[0] ?? false;
+        return $results[0] ?? null;
     }
 
-    /**
-     * Execute the query and get all results.
-     *
-     * @return array
-     * @throws \Exception
-     */
-    public function fetchAll()
+    /** @see get() */
+    public function fetchAll(): array
     {
-        try {
-            if ($this->rawSql !== null) {
-                $sql = $this->rawSql;
-                $bindings = $this->rawBindings;
-            } else {
-                $sql = $this->toSql();
-                $bindings = $this->bindings;
-            }
-
-            $stmt = $this->pdo->prepare($sql);
-            $this->bindValues($stmt, $bindings);
-            $stmt->execute();
-
-            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            $this->reset();
-
-            return $results;
-        } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database query error: " . $e->getMessage());
-        }
+        return $this->get();
     }
 
-    /**
-     * Execute the query and get the first result.
-     *
-     * @return array|false
-     * @throws \Exception
-     */
-    public function fetch()
+    /** @see first() */
+    public function fetch(): ?array
     {
-        $this->limit(1);
-        $results = $this->fetchAll();
-        return $results[0] ?? false;
+        return $this->first();
     }
 
     /**
@@ -559,8 +535,9 @@ class QueryBuilder
      * @return bool
      * @throws \Exception
      */
-    public function insert(array $data)
+    public function insert(array $data): bool
     {
+        $sql = '';
         try {
             $columns = array_keys($data);
             $params = array_map(function($column) {
@@ -585,8 +562,7 @@ class QueryBuilder
 
             return $result;
         } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database insert error: " . $e->getMessage());
+            throw new DatabaseException("Database insert error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
         }
     }
 
@@ -597,8 +573,9 @@ class QueryBuilder
      * @return int The number of affected rows.
      * @throws \Exception
      */
-    public function update(array $data)
+    public function update(array $data): int
     {
+        $sql = '';
         try {
             $setClauses = [];
             $updateBindings = [];
@@ -621,14 +598,11 @@ class QueryBuilder
             $this->bindValues($stmt, $bindings);
             $stmt->execute();
 
-            $affectedRows = $stmt->rowCount();
-
-            $this->reset();
-
-            return $affectedRows;
+            return $stmt->rowCount();
         } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database update error: " . $e->getMessage());
+            throw new DatabaseException("Database update error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        } finally {
+            $this->reset();
         }
     }
 
@@ -638,8 +612,9 @@ class QueryBuilder
      * @return int The number of affected rows.
      * @throws \Exception
      */
-    public function delete()
+    public function delete(): int
     {
+        $sql = '';
         try {
             $sql = "DELETE FROM {$this->table}";
 
@@ -654,14 +629,11 @@ class QueryBuilder
             $this->bindValues($stmt, $bindings);
             $stmt->execute();
 
-            $affectedRows = $stmt->rowCount();
-
-            $this->reset();
-
-            return $affectedRows;
+            return $stmt->rowCount();
         } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database delete error: " . $e->getMessage());
+            throw new DatabaseException("Database delete error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        } finally {
+            $this->reset();
         }
     }
 
@@ -673,6 +645,7 @@ class QueryBuilder
      */
     public function execute()
     {
+        $sql = '';
         try {
             if ($this->rawSql !== null) {
                 $sql = $this->rawSql;
@@ -686,14 +659,11 @@ class QueryBuilder
             $this->bindValues($stmt, $bindings);
             $stmt->execute();
 
-            $affectedRows = $stmt->rowCount();
-
-            $this->reset();
-
-            return $affectedRows;
+            return $stmt->rowCount();
         } catch (PDOException $e) {
-            // Handle exception
-            throw new \Exception("Database execute error: " . $e->getMessage());
+            throw new DatabaseException("Database execute error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        } finally {
+            $this->reset();
         }
     }
 
@@ -709,7 +679,7 @@ class QueryBuilder
             return $this->rawSql;
         }
 
-        $sql = 'SELECT ' . implode(', ', $this->columns) . " FROM {$this->table}";
+        $sql = 'SELECT ' . ($this->distinct ? 'DISTINCT ' : '') . implode(', ', $this->columns) . " FROM {$this->table}";
 
         if ($this->joins) {
             foreach ($this->joins as $join) {
@@ -742,6 +712,485 @@ class QueryBuilder
         }
 
         return $sql;
+    }
+
+    // =========================================================================
+    // Select modifiers
+    // =========================================================================
+
+    /**
+     * Add a raw expression to the SELECT clause.
+     * $app->db->table('orders')->selectRaw('COUNT(*) as total, SUM(amount) as revenue')->get();
+     */
+    public function selectRaw(string $expression): static
+    {
+        $this->columns = [$expression];
+        return $this;
+    }
+
+    /**
+     * Force SELECT DISTINCT.
+     */
+    public function distinct(): static
+    {
+        $this->distinct = true;
+        return $this;
+    }
+
+    // =========================================================================
+    // Additional where clauses
+    // =========================================================================
+
+    /**
+     * WHERE column IS NULL
+     */
+    public function whereNull(string $column, string $boolean = 'AND'): static
+    {
+        $this->wheres[] = [
+            'column'   => $column,
+            'operator' => 'IS NULL',
+            'param'    => '',
+            'boolean'  => $boolean,
+        ];
+        return $this;
+    }
+
+    /**
+     * WHERE column IS NOT NULL
+     */
+    public function whereNotNull(string $column, string $boolean = 'AND'): static
+    {
+        $this->wheres[] = [
+            'column'   => $column,
+            'operator' => 'IS NOT NULL',
+            'param'    => '',
+            'boolean'  => $boolean,
+        ];
+        return $this;
+    }
+
+    /**
+     * WHERE column BETWEEN min AND max
+     */
+    public function whereBetween(string $column, $min, $max, string $boolean = 'AND'): static
+    {
+        $paramMin = $this->generateParameterName($column . '_min');
+        $paramMax = $this->generateParameterName($column . '_max');
+
+        $this->bindings[$paramMin] = $min;
+        $this->bindings[$paramMax] = $max;
+
+        $this->wheres[] = [
+            'column'   => $column,
+            'operator' => 'BETWEEN ' . $paramMin . ' AND',
+            'param'    => $paramMax,
+            'boolean'  => $boolean,
+        ];
+        return $this;
+    }
+
+    /**
+     * WHERE column NOT BETWEEN min AND max
+     */
+    public function whereNotBetween(string $column, $min, $max, string $boolean = 'AND'): static
+    {
+        $paramMin = $this->generateParameterName($column . '_min');
+        $paramMax = $this->generateParameterName($column . '_max');
+
+        $this->bindings[$paramMin] = $min;
+        $this->bindings[$paramMax] = $max;
+
+        $this->wheres[] = [
+            'column'   => $column,
+            'operator' => 'NOT BETWEEN ' . $paramMin . ' AND',
+            'param'    => $paramMax,
+            'boolean'  => $boolean,
+        ];
+        return $this;
+    }
+
+    /**
+     * Add a raw WHERE expression.
+     * ->whereRaw('YEAR(created_at) = :year', ['year' => 2024])
+     */
+    public function whereRaw(string $sql, array $bindings = [], string $boolean = 'AND'): static
+    {
+        $this->wheres[] = [
+            'column'   => $sql,
+            'operator' => '',
+            'param'    => '',
+            'boolean'  => $boolean,
+        ];
+
+        foreach ($bindings as $key => $value) {
+            $param = strpos($key, ':') === 0 ? $key : ':' . $key;
+            $this->bindings[$param] = $value;
+        }
+
+        return $this;
+    }
+
+    // =========================================================================
+    // Order / limit shorthands
+    // =========================================================================
+
+    /** ORDER BY column DESC */
+    public function orderByDesc(string $column): static
+    {
+        return $this->orderBy($column, 'DESC');
+    }
+
+    /** ORDER BY column DESC — shorthand for newest rows first */
+    public function latest(string $column = 'created_at'): static
+    {
+        return $this->orderBy($column, 'DESC');
+    }
+
+    /** ORDER BY column ASC — shorthand for oldest rows first */
+    public function oldest(string $column = 'created_at'): static
+    {
+        return $this->orderBy($column, 'ASC');
+    }
+
+    /** Alias for limit() */
+    public function take(int $limit): static
+    {
+        return $this->limit($limit);
+    }
+
+    /** Alias for offset() */
+    public function skip(int $offset): static
+    {
+        return $this->offset($offset);
+    }
+
+    // =========================================================================
+    // Aggregate methods
+    // =========================================================================
+
+    /** SELECT MAX(column) */
+    public function max(string $column)
+    {
+        $result = $this->select("MAX($column) AS aggregate")->fetch();
+        return $result['aggregate'] ?? null;
+    }
+
+    /** SELECT MIN(column) */
+    public function min(string $column)
+    {
+        $result = $this->select("MIN($column) AS aggregate")->fetch();
+        return $result['aggregate'] ?? null;
+    }
+
+    /** SELECT SUM(column) */
+    public function sum(string $column)
+    {
+        $result = $this->select("SUM($column) AS aggregate")->fetch();
+        return $result['aggregate'] ?? 0;
+    }
+
+    /** SELECT AVG(column) */
+    public function avg(string $column)
+    {
+        $result = $this->select("AVG($column) AS aggregate")->fetch();
+        return $result['aggregate'] ?? null;
+    }
+
+    /**
+     * Returns true if any rows match the current query.
+     */
+    public function exists(): bool
+    {
+        return $this->count() > 0;
+    }
+
+    /**
+     * Returns true if no rows match the current query.
+     */
+    public function doesntExist(): bool
+    {
+        return !$this->exists();
+    }
+
+    // =========================================================================
+    // Write helpers
+    // =========================================================================
+
+    /**
+     * Insert a row and return the last inserted ID.
+     *
+     * @return string|false
+     */
+    public function insertGetId(array $data)
+    {
+        $success = $this->insert($data);
+        return $success ? $this->pdo->lastInsertId() : false;
+    }
+
+    /**
+     * Increment a column value by the given amount.
+     * ->table('posts')->where('id', 1)->increment('views')
+     */
+    public function increment(string $column, int $amount = 1): int
+    {
+        return $this->adjustColumn($column, abs($amount), '+');
+    }
+
+    /**
+     * Decrement a column value by the given amount.
+     * ->table('products')->where('id', 1)->decrement('stock')
+     */
+    public function decrement(string $column, int $amount = 1): int
+    {
+        return $this->adjustColumn($column, abs($amount), '-');
+    }
+
+    /**
+     * Truncate the table — removes all rows, resets auto-increment.
+     */
+    public function truncate(): void
+    {
+        $this->pdo->exec("TRUNCATE TABLE {$this->table}");
+        $this->reset();
+    }
+
+    /**
+     * Insert a row, silently skipping if a duplicate unique key exists.
+     *
+     * INSERT IGNORE INTO table (...) VALUES (...)
+     */
+    public function insertOrIgnore(array $data): bool
+    {
+        $sql = '';
+        try {
+            $columns = array_keys($data);
+            $params  = array_map(fn($col) => ':' . $col, $columns);
+
+            $sql  = "INSERT IGNORE INTO {$this->table} (";
+            $sql .= implode(', ', $columns) . ") VALUES (";
+            $sql .= implode(', ', $params) . ")";
+
+            $stmt     = $this->pdo->prepare($sql);
+            $bindings = [];
+            foreach ($data as $column => $value) {
+                $bindings[':' . $column] = $value;
+            }
+
+            $this->bindValues($stmt, $bindings);
+            $result = $stmt->execute();
+            $this->reset();
+            return $result;
+        } catch (\PDOException $e) {
+            throw new DatabaseException("Database insertOrIgnore error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        }
+    }
+
+    /**
+     * Insert a row, or update it if a duplicate unique key is found.
+     *
+     * INSERT INTO table (...) VALUES (...)
+     * ON DUPLICATE KEY UPDATE col = val, ...
+     *
+     * @param array $data       Full row data to insert
+     * @param array $uniqueKeys Columns that identify a duplicate (used to exclude from UPDATE)
+     */
+    public function upsert(array $data, array $uniqueKeys = []): bool
+    {
+        $sql = '';
+        try {
+            $columns = array_keys($data);
+            $params  = array_map(fn($col) => ':' . $col, $columns);
+
+            $sql  = "INSERT INTO {$this->table} (";
+            $sql .= implode(', ', $columns) . ") VALUES (";
+            $sql .= implode(', ', $params) . ")";
+
+            // Build ON DUPLICATE KEY UPDATE for all non-unique columns
+            $updateColumns = empty($uniqueKeys)
+                ? $columns
+                : array_filter($columns, fn($col) => !in_array($col, $uniqueKeys));
+
+            $updates = array_map(fn($col) => "{$col} = :{$col}", $updateColumns);
+            $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $updates);
+
+            $stmt     = $this->pdo->prepare($sql);
+            $bindings = [];
+            foreach ($data as $column => $value) {
+                $bindings[':' . $column] = $value;
+            }
+
+            $this->bindValues($stmt, $bindings);
+            $result = $stmt->execute();
+            $this->reset();
+            return $result;
+        } catch (\PDOException $e) {
+            throw new DatabaseException("Database upsert error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        }
+    }
+
+    /**
+     * Process large result sets in small batches to keep memory usage low.
+     *
+     * $app->db->table('users')->chunk(500, function($rows) {
+     *     foreach ($rows as $row) { ... }
+     * });
+     *
+     * Return false from the callback to stop early.
+     */
+    public function chunk(int $size, callable $callback): void
+    {
+        $offset = 0;
+
+        // Snapshot current wheres/bindings — reused for each batch
+        $wheres   = $this->wheres;
+        $bindings = $this->bindings;
+        $columns  = $this->columns;
+        $orderBys = $this->orderBys;
+
+        while (true) {
+            // Restore state for each batch (get() resets after executing)
+            $this->wheres   = $wheres;
+            $this->bindings = $bindings;
+            $this->columns  = $columns;
+            $this->orderBys = $orderBys;
+
+            $rows = $this->limit($size)->offset($offset)->get();
+
+            if (empty($rows)) {
+                break;
+            }
+
+            if ($callback($rows) === false) {
+                break;
+            }
+
+            $offset += $size;
+
+            // If we got fewer rows than the chunk size we've reached the end
+            if (count($rows) < $size) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * Paginate the query results.
+     *
+     * Runs two queries automatically:
+     *   1. COUNT(*) with the same WHERE / JOIN / GROUP BY conditions.
+     *   2. SELECT with LIMIT + OFFSET for the requested page.
+     *
+     * The returned object has the same shape as Paginator::paginate() plus
+     * a ->data property, so it works directly with Paginator::renderLinks().
+     *
+     * @param int      $perPage Number of rows per page.
+     * @param int|null $page    Current page number. Reads $_GET['page'] when null.
+     * @return object{data:array, currentPage:int, totalPages:int, totalItems:int,
+     *                perPage:int, offset:int, hasNext:bool, hasPrevious:bool,
+     *                nextPage:int, previousPage:int, queryParams:string}
+     */
+    public function paginate(int $perPage, ?int $page = null): object
+    {
+        $perPage     = max(1, $perPage);
+        $currentPage = $page ?? (isset($_GET['page']) ? (int) $_GET['page'] : 1);
+        $currentPage = max(1, $currentPage);
+
+        // Snapshot query state — count() resets wheres/bindings/joins after executing
+        $wheres   = $this->wheres;
+        $bindings = $this->bindings;
+        $columns  = $this->columns;
+        $joins    = $this->joins;
+        $orderBys = $this->orderBys;
+        $groupBys = $this->groupBys;
+        $havings  = $this->havings;
+
+        // Query 1: total count (shares all WHERE conditions)
+        $total = $this->count();
+
+        // Restore state for the data query
+        $this->wheres   = $wheres;
+        $this->bindings = $bindings;
+        $this->columns  = $columns;
+        $this->joins    = $joins;
+        $this->orderBys = $orderBys;
+        $this->groupBys = $groupBys;
+        $this->havings  = $havings;
+
+        // Page math
+        $totalPages  = max(1, (int) ceil($total / $perPage));
+        $currentPage = min($currentPage, $totalPages);
+        $offset      = ($currentPage - 1) * $perPage;
+
+        // Query 2: paginated data
+        $data = $this->limit($perPage)->offset($offset)->get();
+
+        // Carry through any extra $_GET params (e.g. search/filter) for link building
+        $qp = $_GET;
+        unset($qp['page']);
+        $queryParamString = !empty($qp)
+            ? http_build_query($qp, '', '&amp;') . '&amp;'
+            : '';
+
+        return (object) [
+            'data'         => $data,
+            'currentPage'  => $currentPage,
+            'totalPages'   => $totalPages,
+            'totalItems'   => $total,
+            'perPage'      => $perPage,
+            'offset'       => $offset,
+            'hasNext'      => $currentPage < $totalPages,
+            'hasPrevious'  => $currentPage > 1,
+            'nextPage'     => min($currentPage + 1, $totalPages),
+            'previousPage' => max($currentPage - 1, 1),
+            'queryParams'  => $queryParamString,
+        ];
+    }
+
+    // =========================================================================
+    // Conditional query building
+    // =========================================================================
+
+    /**
+     * Apply the callback only when condition is true.
+     *
+     * ->when($request['active'], fn($q) => $q->where('status', 'active'))
+     */
+    public function when($condition, callable $callback): static
+    {
+        if ($condition) {
+            $callback($this);
+        }
+        return $this;
+    }
+
+    // =========================================================================
+    // Internal helpers
+    // =========================================================================
+
+    /**
+     * Shared logic for increment() and decrement().
+     */
+    private function adjustColumn(string $column, int $amount, string $operator): int
+    {
+        $param = $this->generateParameterName('adj');
+        $this->bindings[$param] = $amount;
+
+        $sql = "UPDATE {$this->table} SET {$column} = {$column} {$operator} {$param}";
+
+        if ($this->wheres) {
+            $sql .= ' WHERE ' . $this->buildWheres();
+        }
+
+        try {
+            $stmt = $this->pdo->prepare($sql);
+            $this->bindValues($stmt, $this->bindings);
+            $stmt->execute();
+            $affected = $stmt->rowCount();
+            $this->reset();
+            return $affected;
+        } catch (\PDOException $e) {
+            throw new DatabaseException("Database error: " . $e->getMessage() . " | SQL: " . $sql, 0, $e);
+        }
     }
 
     /**
@@ -790,6 +1239,7 @@ class QueryBuilder
         $this->havings = [];
         $this->rawSql = null;
         $this->rawBindings = [];
+        $this->distinct = false;
     }
 
     /**

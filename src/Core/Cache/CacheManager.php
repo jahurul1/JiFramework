@@ -6,37 +6,38 @@ use JiFramework\Config\Config;
 class CacheManager
 {
     /**
-     * @var CacheInterface|null The instance of the selected cache driver.
+     * @var CacheInterface|null The single cache instance.
      */
-    protected static $cacheInstance = null;
+    protected static ?CacheInterface $instance = null;
 
     /**
      * Get the cache instance based on the configured cache driver.
+     * The instance is created once and reused on all subsequent calls.
      *
-     * @param string|null $cacheDriver Optional cache driver to use.
-     * @param string|null $cachePath Optional path to the cache directory.
-     * @return CacheInterface The cache instance.
-     * @throws \Exception If an unsupported cache driver is configured.
+     * @param string|null $cacheDriver 'file' or 'sqlite'. Defaults to Config::$cacheDriver.
+     * @return CacheInterface
+     * @throws \Exception If an unsupported cache driver is specified.
      */
-    public static function getInstance($cacheDriver=null)
+    public static function getInstance($cacheDriver = null): CacheInterface
     {
-        // Set the cache driver and path based on the provided arguments or the configuration
-        $cDriver = $cacheDriver ?? Config::CACHE_DRIVER;
-
-        // Create a new cache instance based on the configured driver
-        switch ($cDriver) {
-            case 'file':
-                self::$cacheInstance = new FileCache(Config::CACHE_PATH);
-                break;
-            case 'sqlite':
-                self::$cacheInstance = new DatabaseCache(Config::CACHE_DATABASE_PATH);
-                break;
-            default:
-                throw new \Exception('Unsupported cache driver: ' . Config::CACHE_DRIVER);
+        if (self::$instance !== null) {
+            return self::$instance;
         }
 
-        // Return the cache instance
-        return self::$cacheInstance;
+        $cDriver = $cacheDriver ?? Config::$cacheDriver;
+
+        switch ($cDriver) {
+            case 'file':
+                self::$instance = new FileCache(Config::$cachePath);
+                break;
+            case 'sqlite':
+                self::$instance = new DatabaseCache(Config::$cacheDatabasePath);
+                break;
+            default:
+                throw new \Exception('Unsupported cache driver: ' . $cDriver);
+        }
+
+        return self::$instance;
     }
 }
 

@@ -54,11 +54,11 @@ class LanguageManager
     public function __construct()
     {
         // Initialize configuration properties
-        $this->multiLangEnabled = Config::MULTI_LANG;
-        $this->multiLangMethod = Config::MULTI_LANG_METHOD;
-        $this->defaultLanguage = Config::MULTI_LANG_DEFAULT_LANG;
-        $this->multiLangKey = Config::MULTI_LANG_KEY;
-        $this->languageDir = Config::MULTI_LANG_DIR;
+        $this->multiLangEnabled = Config::$multiLang;
+        $this->multiLangMethod  = Config::$multiLangMethod;
+        $this->defaultLanguage  = Config::$multiLangDefaultLang;
+        $this->multiLangKey     = Config::$multiLangKey;
+        $this->languageDir      = Config::$multiLangDir;
 
         if (!$this->multiLangEnabled) {
             throw new Exception('Multi-language support is disabled in Config.php');
@@ -187,9 +187,10 @@ class LanguageManager
             header("Location: " . $url . '?' . $newQueryStr);
             exit;
         } elseif ($this->multiLangMethod === 'cookie') {
-            // Set the language in a cookie
-            setcookie($this->multiLangKey, $lang, time() + (365 * 86400), "/"); // 1 year
-            // Update current language
+            if (!headers_sent()) {
+                setcookie($this->multiLangKey, $lang, time() + (365 * 86400), '/'); // 1 year
+            }
+            // Update current language regardless (in-memory switch always works)
             $this->currentLang = $lang;
             $this->loadLanguageFile($lang);
             return true;
@@ -222,37 +223,60 @@ class LanguageManager
      *
      * @param string $key
      * @param array $placeholders Optional placeholders.
-     * @return string
+     * @return string The translated string, or $key if no translation is found.
      */
     public function translate($key, $placeholders = [])
     {
         if (isset($this->langStrings[$key])) {
-            $translation = $this->langStrings[$key];
-            // Replace placeholders
-            if (!empty($placeholders)) {
-                foreach ($placeholders as $placeholder => $value) {
-                    $translation = str_replace('{' . $placeholder . '}', $value, $translation);
-                }
-            }
-            return $translation;
+            return $this->applyPlaceholders($this->langStrings[$key], $placeholders);
         }
 
-        // Attempt to fallback to default language if key is missing
+        // Fallback to default language if current language is missing the key
         if ($this->currentLang !== $this->defaultLanguage) {
             $defaultStrings = $this->loadDefaultLanguageStrings();
             if (isset($defaultStrings[$key])) {
-                $translation = $defaultStrings[$key];
-                // Replace placeholders
-                if (!empty($placeholders)) {
-                    foreach ($placeholders as $placeholder => $value) {
-                        $translation = str_replace('{' . $placeholder . '}', $value, $translation);
-                    }
-                }
-                return $translation;
+                return $this->applyPlaceholders($defaultStrings[$key], $placeholders);
             }
         }
 
-        return '<strong>{'.$key.'}</strong>'; // Return the key itself if no translation is found
+        return $key; // Return the key as-is if no translation found
+    }
+
+    /**
+     * Check if a translation key exists in the current language (or default fallback).
+     *
+     * @param string $key
+     * @return bool
+     */
+    public function hasTranslation($key)
+    {
+        if (isset($this->langStrings[$key])) {
+            return true;
+        }
+
+        if ($this->currentLang !== $this->defaultLanguage) {
+            $defaultStrings = $this->loadDefaultLanguageStrings();
+            return isset($defaultStrings[$key]);
+        }
+
+        return false;
+    }
+
+    /**
+     * Replace {placeholder} tokens in a translation string.
+     *
+     * @param string $text
+     * @param array  $placeholders
+     * @return string
+     */
+    private function applyPlaceholders($text, $placeholders)
+    {
+        if (!empty($placeholders)) {
+            foreach ($placeholders as $placeholder => $value) {
+                $text = str_replace('{' . $placeholder . '}', $value, $text);
+            }
+        }
+        return $text;
     }
 
     /**
@@ -302,8 +326,6 @@ class LanguageManager
         }
         return false;
     }
-
-    
 }
 
 

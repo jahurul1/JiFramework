@@ -25,7 +25,7 @@ class DatabaseCache implements CacheInterface
      */
     public function __construct($databasePath = null)
     {
-        $this->databasePath = $databasePath ?? Config::CACHE_DATABASE_PATH;
+        $this->databasePath = $databasePath ?? Config::$cacheDatabasePath;
 
         // Ensure the directory for the database file exists
         $directory = dirname($this->databasePath);

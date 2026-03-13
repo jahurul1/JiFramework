@@ -1,20 +1,29 @@
+# Disable directory listing
+Options -Indexes
+
 # Enable the Rewrite Engine
 RewriteEngine On
 
-# Deny access to storage and Config directories
-RewriteRule ^(Storage|Config)/ - [F,L]
+# Deny direct access to sensitive directories
+RewriteRule ^(storage|src|config)/ - [F,L]
+
+# Router mode: redirect all requests to index.php
+# Real files and directories (assets, images, css, js) are served directly.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
 
 # Deny access to .db files
 <FilesMatch "\.db$">
     Require all denied
 </FilesMatch>
 
-# Deny access to .db files
+# Deny access to .cache files
 <FilesMatch "\.cache$">
     Require all denied
 </FilesMatch>
 
-# Deny access to hidden files (files starting with .)
+# Deny access to hidden files (.env, .gitignore, .htpasswd, etc.)
 <FilesMatch "^\.">
     Require all denied
 </FilesMatch>

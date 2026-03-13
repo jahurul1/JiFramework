@@ -4,6 +4,7 @@ namespace JiFramework\Core\Error;
 use JiFramework\Config\Config;
 use JiFramework\Core\Logger\Logger;
 use JiFramework\Core\Error\ErrorPageHandler;
+use JiFramework\Exceptions\HttpException;
 use Throwable;
 
 class ErrorHandler
@@ -35,7 +36,7 @@ class ErrorHandler
         $this->errorPageHandler = $errorPageHandler;
 
         // Initialize configuration values
-        $this->environment = Config::APP_MODE;
+        $this->environment = Config::$appMode;
     }
 
     /**
@@ -67,7 +68,11 @@ class ErrorHandler
      */
     public function handleError($errno, $errstr, $errfile, $errline)
     {
-        // Convert error to ErrorException
+        // Respect error_reporting() level and the @ suppression operator
+        if (!(error_reporting() & $errno)) {
+            return false;
+        }
+
         throw new \ErrorException($errstr, 0, $errno, $errfile, $errline);
     }
 
@@ -128,10 +133,12 @@ class ErrorHandler
      * @param Throwable $exception
      * @return int
      */
-    private function getStatusCode(Throwable $exception)
+    private function getStatusCode(Throwable $exception): int
     {
-        // You can map different exception types to different status codes
-        // For simplicity, we'll return 500 for all exceptions
+        if ($exception instanceof HttpException) {
+            return $exception->getStatusCode();
+        }
+
         return 500;
     }
 

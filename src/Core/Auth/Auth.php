@@ -25,11 +25,9 @@ class Auth
     protected $adminRememberCookie;
     protected $userRememberCookie;
 
-    /**
-     * The tokens table name.
-     *
-     * @var string
-     */
+    /** Database table names — configurable via config/jiconfig.php */
+    protected $adminTable;
+    protected $userTable;
     protected $tokensTable;
 
     /**
@@ -39,16 +37,18 @@ class Auth
     {
         $this->db = new QueryBuilder();
 
-        // Set session keys from Config constants
-        $this->adminSessionKey = Config::ADMIN_SESSION_KEY;
-        $this->userSessionKey = Config::USER_SESSION_KEY;
+        // Set session keys from Config
+        $this->adminSessionKey = Config::$adminSessionKey;
+        $this->userSessionKey = Config::$userSessionKey;
 
-        // Set remember me cookie name from Config constant
-        $this->adminRememberCookie = Config::ADMIN_REMEMBER_COOKIE;
-        $this->userRememberCookie = Config::USER_REMEMBER_COOKIE;
+        // Set remember me cookie names from Config
+        $this->adminRememberCookie = Config::$adminRememberCookie;
+        $this->userRememberCookie = Config::$userRememberCookie;
 
-        // Set tokens table name (default to 'tokens' if not set)
-        $this->tokensTable = 'tokens';
+        // Table names — read from config, defaults match original behaviour
+        $this->adminTable  = Config::$authAdminTable;
+        $this->userTable   = Config::$authUserTable;
+        $this->tokensTable = Config::$authTokenTable;
 
         // Check remember me tokens
         $this->checkRememberMe();
@@ -64,7 +64,7 @@ class Auth
      */
     public function adminLogin($email, $password, $remember = false)
     {
-        $admin = $this->db->table('admin')
+        $admin = $this->db->table($this->adminTable)
                           ->where('email', $email)
                           ->fetch();
 
@@ -89,7 +89,7 @@ class Auth
      */
     public function adminLoginById($id)
     {
-        $admin = $this->db->table('admin')
+        $admin = $this->db->table($this->adminTable)
                           ->where('id', $id)
                           ->fetch();
 
@@ -112,7 +112,7 @@ class Auth
      */
     public function userLogin($email, $password, $remember = false)
     {
-        $user = $this->db->table('users')
+        $user = $this->db->table($this->userTable)
                          ->where('email', $email)
                          ->fetch();
 
@@ -137,7 +137,7 @@ class Auth
      */
     public function userLoginById($id)
     {
-        $user = $this->db->table('users')
+        $user = $this->db->table($this->userTable)
                          ->where('id', $id)
                          ->fetch();
 
@@ -236,7 +236,7 @@ class Auth
     public function getAdmin()
     {
         if ($this->isAdminLoggedIn()) {
-            return $this->db->table('admin')
+            return $this->db->table($this->adminTable)
                             ->where('id', $_SESSION[$this->adminSessionKey])
                             ->fetch();
         }
@@ -252,7 +252,7 @@ class Auth
     public function getUser()
     {
         if ($this->isUserLoggedIn()) {
-            return $this->db->table('users')
+            return $this->db->table($this->userTable)
                             ->where('id', $_SESSION[$this->userSessionKey])
                             ->fetch();
         }

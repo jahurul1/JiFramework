@@ -1,87 +1,66 @@
 # Contributing to JiFramework
 
-Thank you for considering contributing to JiFramework! This document provides guidelines and instructions for contributing to this project.
+Thank you for your interest in contributing! Here's how to get started.
 
-## Code of Conduct
+## Requirements
 
-By participating in this project, you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+- PHP 7.4 or higher
+- Composer
 
-## How Can I Contribute?
-
-### Reporting Bugs
-
-Before submitting a bug report:
-
-1. Check the issue tracker to avoid duplicates
-2. Collect information about the bug:
-   - Steps to reproduce
-   - Expected behavior
-   - Actual behavior
-   - Screenshots (if applicable)
-   - Environment details (PHP version, OS, etc.)
-3. Use the bug report template when creating an issue
-
-### Suggesting Features
-
-Feature suggestions are welcome! Please:
-
-1. Check existing feature requests
-2. Clearly describe the feature and its benefits
-3. Provide examples of how it would be used
-
-### Pull Requests
-
-Follow these steps for submitting code:
-
-1. Fork the repository
-2. Create a new branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`php tests/run_tests.php`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a pull request
-
-## Development Setup
-
-1. Clone the repository
-2. Run `composer install`
-3. Copy `.env.example` to `.env` and configure
-4. Run the tests to ensure everything is working
-
-## Coding Standards
-
-- Follow PSR-12 coding standards
-- Use meaningful variable/method names
-- Write clear, maintainable code
-- Document your code with PHPDoc comments
-
-## Testing
-
-- All new features must include tests
-- All bug fixes must include a test that demonstrates the bug is fixed
-- Run the test suite before submitting a pull request:
+## Setup
 
 ```bash
-php tests/run_tests.php
+git clone https://github.com/your-username/JiFramework.git
+cd JiFramework
+composer install
 ```
 
-## Documentation
+## Running Tests
 
-- Update documentation for any changes to public APIs
-- Include code examples where appropriate
-- Keep the language clear and accessible
+```bash
+# Run all tests (Unit + Feature + Database)
+php vendor/bin/phpunit
 
-## Git Commit Messages
+# Run a specific suite
+php vendor/bin/phpunit --testsuite Unit
+php vendor/bin/phpunit --testsuite Feature
+php vendor/bin/phpunit --testsuite Database
 
-- Use the present tense ("Add feature" not "Added feature")
-- Use the imperative mood ("Move cursor to..." not "Moves cursor to...")
-- Limit the first line to 72 characters
-- Reference issues and pull requests after the first line
+# Run network tests (requires internet connection)
+php vendor/bin/phpunit --group network
+```
 
-## Versioning
+All tests must pass before submitting a pull request.
 
-This project follows [Semantic Versioning](https://semver.org/).
+## How to Contribute
+
+1. Fork the repository
+2. Create a branch: `git checkout -b feature/your-feature-name`
+3. Make your changes
+4. Add or update tests to cover your changes
+5. Run the full test suite and confirm all tests pass
+6. Commit with a clear message: `git commit -m "Add: short description"`
+7. Push your branch and open a Pull Request
+
+## Code Style
+
+- Follow PSR-12 coding standards
+- Use meaningful method and variable names
+- Keep methods small and focused
+- Add PHPDoc comments to public methods
+
+## Reporting Bugs
+
+Open an issue on GitHub with:
+- PHP version
+- Steps to reproduce
+- Expected vs actual behaviour
+
+## Security Issues
+
+Do **not** open a public issue for security vulnerabilities.
+Email directly: **info@jahurul.in**
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's [MIT License](LICENSE). 
+By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).

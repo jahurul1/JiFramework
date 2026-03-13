@@ -19,7 +19,7 @@ class FileCache implements CacheInterface
 
     public function __construct($cachePath = null)
     {
-        $this->cachePath = $cachePath ?? Config::CACHE_PATH;
+        $this->cachePath = $cachePath ?? Config::$cachePath;
 
         // Ensure the cache directory exists, create if it doesn't
         if (!is_dir($this->cachePath)) {

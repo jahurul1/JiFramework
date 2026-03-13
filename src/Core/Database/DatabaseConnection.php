@@ -4,6 +4,7 @@ namespace JiFramework\Core\Database;
 use PDO;
 use PDOException;
 use JiFramework\Config\Config;
+use JiFramework\Exceptions\DatabaseException;
 
 class DatabaseConnection
 {
@@ -37,7 +38,7 @@ class DatabaseConnection
         } else {
             $dbConfig = Config::$databases[$connectionName] ?? null;
             if (!$dbConfig) {
-                throw new \Exception("Database configuration for '{$connectionName}' not found.");
+                throw new DatabaseException("Database configuration for '{$connectionName}' not found.");
             }
         }
 
@@ -60,12 +61,12 @@ class DatabaseConnection
         } catch (PDOException $e) {
             // Handle connection errors
             $message = "Database connection error ({$connectionName}): " . $e->getMessage();
-            if (Config::APP_MODE === 'development') {
-                throw new \Exception($message);
+            if (Config::$appMode === 'development') {
+                throw new DatabaseException($message, 0, $e);
             } else {
                 // In production mode, log the error and show a generic message
                 error_log($message);
-                throw new \Exception("Unable to connect to the database.");
+                throw new DatabaseException("Unable to connect to the database.", 0, $e);
             }
         }
     }

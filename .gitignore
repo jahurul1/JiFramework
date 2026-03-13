@@ -1,36 +1,64 @@
-# JI Framework .gitignore
+# JiFramework .gitignore
+
+# AI / dev memory
+.jidev/
+memory/
 
 # Logs
 *.log
-error_logs.log
-app.log
-logs/
-src/Storage/Logs/*
-!src/Storage/Logs/.gitkeep
+storage/Logs/*
+!storage/Logs/.gitkeep
 
 # Databases
 *.sqlite
 *.sqlite3
 *.db
-src/Storage/RateLimit/*
-!src/Storage/RateLimit/.gitkeep
+storage/RateLimit/*
+!storage/RateLimit/.gitkeep
 
 # Cache
-src/Storage/Cache/*
-!src/Storage/Cache/.gitkeep
+storage/Cache/*
+!storage/Cache/.gitkeep
 
 # User uploaded files
-src/Storage/Uploads/*
-!src/Storage/Uploads/.gitkeep
+storage/Uploads/*
+!storage/Uploads/.gitkeep
+
+# Access control runtime data
+storage/AccessControl/*
+!storage/AccessControl/.gitkeep
+
+# User config (copy jiconfig.example.php → jiconfig.php and fill in your values)
+jiconfig.php
+config/jiconfig.php
 
 # Environment configuration
 .env
 .env.local
 .env.*.local
-config.local.php
 
 # Composer dependencies
 /vendor/
+composer.lock
+
+# Test project (local dev only)
+/TestProject/
+
+# PHPUnit artifacts
+.phpunit.result.cache
+test-results/
+coverage/
+*coverage.xml
+
+# Build artifacts
+/build/
+/dist/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+/tmp/
 
 # Editors
 .idea/
@@ -50,26 +78,9 @@ config.local.php
 ehthumbs.db
 Thumbs.db
 
-# Testing artifacts
-phpunit.xml
-test-results/
-coverage/
-*coverage.xml
-test_results.txt
-
-# Build artifacts
-/build/
-/dist/
-
-# Temporary files
-*.tmp
-*.bak
-*.cache
-/tmp/
-
-# Node.js (if used for frontend)
+# Node.js
 /node_modules/
 npm-debug.log
 yarn-error.log
 package-lock.json
-yarn.lock 
+yarn.lock

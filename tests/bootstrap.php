@@ -1,142 +1,57 @@
 <?php
+
 /**
- * Bootstrap file for tests
- * 
- * This file ensures that the necessary components are loaded
- * before tests are run.
+ * PHPUnit bootstrap — runs once before the entire test suite.
+ *
+ * Sets up a minimal, test-safe environment:
+ *   - Superglobals that the framework reads during boot
+ *   - Config::initialize() called exactly once
+ *   - All file-I/O paths redirected to a writable temp dir
+ *   - Dangerous features (rate-limit, IP/country blocking) disabled
  */
 
-// Check command line arguments for debug or progress mode
-$debug = false;
-$quiet = true; // Default to quiet mode
-$progress = false;
+$_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+$_SERVER['HTTP_HOST']      = 'localhost';
+$_SERVER['REQUEST_URI']    = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['HTTPS']          = 'off';
+$_SERVER['SERVER_PORT']    = '80';
 
-if (isset($argv[1])) {
-    if ($argv[1] === 'debug') {
-        $debug = true;
-        $quiet = false;
-    } elseif ($argv[1] === 'progress') {
-        $progress = true;
-    }
-}
-if (isset($argv[2])) {
-    if ($argv[2] === 'debug') {
-        $debug = true;
-        $quiet = false;
-    } elseif ($argv[2] === 'progress') {
-        $progress = true;
-    }
-}
+// Make Config::detectBasePath() resolve to the project root so that the
+// optional config/jiconfig.php is found (or gracefully skipped).
+$_SERVER['SCRIPT_FILENAME'] = dirname(__DIR__) . '/index.php';
 
-// Function to output bootstrap information if not in quiet/progress mode
-function bootstrap_output($message) {
-    global $quiet, $progress, $debug;
-    if (!$quiet && !$progress || $debug) {
-        echo $message . "\n";
-    }
-}
+require dirname(__DIR__) . '/vendor/autoload.php';
 
-// Autoload framework classes
-require_once __DIR__ . '/../vendor/autoload.php';
-
-// Import Config class
 use JiFramework\Config\Config;
 
-// Initialize the configuration
+// Boot Config once — idempotent, won't re-run in later test classes.
+// Suppress the "jiconfig.php not found" warning — expected in test environment.
+set_error_handler(function () { return true; }, E_USER_WARNING);
 Config::initialize();
+restore_error_handler();
 
-// Set up test environment
-// Override any configuration needed for testing
-// For example, use a test database instead of the production one
-$testDbName = 'jiframework_test';
-Config::$primaryDatabase['database'] = $testDbName;
+// ── Redirect all storage I/O to an isolated temp directory ──────────────────
+$testStorage = sys_get_temp_dir() . '/ji_framework_tests/';
+@mkdir($testStorage, 0755, true);
 
-bootstrap_output("==========================================================");
-bootstrap_output("        jiFramework Test Bootstrap                        ");
-bootstrap_output("==========================================================");
-bootstrap_output("Setting up test database: {$testDbName}");
+Config::$storagePath           = $testStorage;
+Config::$logFilePath           = $testStorage . 'Logs/';
+Config::$cachePath             = $testStorage . 'Cache/FileCache/';
+Config::$cacheDatabasePath     = $testStorage . 'Cache/DatabaseCache/ji_sqlite_cache.db';
+Config::$rateLimitDatabasePath = $testStorage . 'RateLimit/rate_limit.db';
+Config::$uploadDirectory       = $testStorage . 'Uploads/';
+Config::$ipBlockListPath       = $testStorage . 'AccessControl/ip_block_list.json';
+Config::$countryBlockListPath  = $testStorage . 'AccessControl/country_block_list.json';
 
-// Ensure test database exists
-try {
-    // Create a temporary PDO connection to the server without specifying a database
-    $dsn = Config::$primaryDatabase['driver'] . ':host=' . Config::$primaryDatabase['host'];
-    bootstrap_output("Connecting to database server using DSN: {$dsn}");
-    
-    $tempPdo = new PDO(
-        $dsn,
-        Config::$primaryDatabase['username'],
-        Config::$primaryDatabase['password'],
-        [
-            \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION
-        ]
-    );
-    
-    // Drop the test database if it exists and create a fresh one
-    bootstrap_output("Dropping test database if it exists...");
-    $tempPdo->exec("DROP DATABASE IF EXISTS `$testDbName`");
-    
-    bootstrap_output("Creating test database...");
-    $tempPdo->exec("CREATE DATABASE `$testDbName`");
-    
-    bootstrap_output("Test database created successfully.");
-    
-    // Connect to the new database to make sure it works
-    $testDbDsn = $dsn . ";dbname={$testDbName}";
-    bootstrap_output("Testing connection to new database: {$testDbDsn}");
-    
-    $testDbPdo = new PDO(
-        $testDbDsn,
-        Config::$primaryDatabase['username'],
-        Config::$primaryDatabase['password'],
-        [
-            \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION
-        ]
-    );
-    
-    bootstrap_output("Successfully connected to test database.");
-    
-    // Create the test table in advance
-    bootstrap_output("Creating test_table...");
-    $createTableSql = "
-        CREATE TABLE `test_table` (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            email VARCHAR(100),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    ";
-    
-    $testDbPdo->exec($createTableSql);
-    bootstrap_output("Test table created successfully.");
-    
-} catch (PDOException $e) {
-    bootstrap_output("Database setup error: " . $e->getMessage());
-    // Continue execution to allow tests that don't require database to run
-}
+// ── Disable features that talk to external services or need real DB ──────────
+Config::$rateLimitEnabled       = false;
+Config::$ipBlockingEnabled      = false;
+Config::$countryBlockingEnabled = false;
+Config::$logEnabled             = false; // individual tests re-enable as needed
+Config::$multiLang              = false;
+Config::$routerEnabled          = false;
+Config::$appMode                = 'development';
 
-// Create test directories if they don't exist
-$testCacheDir = Config::STORAGE_PATH . 'Cache/FileCache/test/';
-if (!is_dir($testCacheDir)) {
-    mkdir($testCacheDir, 0777, true);
-}
-
-$testLogsDir = Config::STORAGE_PATH . 'Logs/test/';
-if (!is_dir($testLogsDir)) {
-    mkdir($testLogsDir, 0777, true);
-}
-
-$testUploadsDir = Config::STORAGE_PATH . 'Uploads/test/';
-if (!is_dir($testUploadsDir)) {
-    mkdir($testUploadsDir, 0777, true);
-}
-
-// Function to help with test teardown
-function cleanupTestFiles() {
-    // Add cleanup logic here
-    // For example, remove test files
-}
-
-// Register teardown function to run on script completion
-register_shutdown_function('cleanupTestFiles'); 
-
-
+// ── Reset CacheManager singleton between test runs (tests use fresh instances)
+// Done via tearDown in TestCase — nothing extra needed here.

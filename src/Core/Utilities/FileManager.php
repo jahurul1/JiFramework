@@ -7,227 +7,233 @@ use JiFramework\Config\Config;
 
 class FileManager
 {
+    // =========================================================================
+    // Upload Info
+    // =========================================================================
+
     /**
-     * Extract detailed information from a single file.
+     * Extract detailed information from a single uploaded file ($_FILES entry).
+     * Validates that the file was actually uploaded via HTTP POST.
      *
-     * @param array $file The file array from $_FILES.
-     * @return array      An array containing enhanced file information.
-     * @throws Exception If the file is not valid.
+     * @param array $file  Single file array from $_FILES.
+     * @return array       Enhanced file information.
+     * @throws Exception   If the file was not uploaded via HTTP POST.
      */
-    public function extractFileInfo(array $file)
+    public function getUploadInfo(array $file): array
     {
-        // Check if the file is uploaded via HTTP POST
         if (!is_uploaded_file($file['tmp_name'])) {
-            throw new Exception('File upload error: Possible file upload attack.');
+            throw new Exception('File upload error: possible file upload attack.');
         }
 
-        // Basic file information
-        $fileName = $file['name'];
-        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-        $fileSize = $file['size'];
-        $fileTempName = $file['tmp_name'];
-        $fileTypeProvided = $file['type']; // The MIME type provided by $_FILES
+        $name    = $file['name'];
+        $tmpName = $file['tmp_name'];
+        $finfo   = new finfo(FILEINFO_MIME_TYPE);
 
-        // Get actual MIME type for security
-        $finfo = new finfo(FILEINFO_MIME_TYPE);
-        $fileActualMimeType = $finfo->file($fileTempName);
-
-        // Get file's last modification time
-        $fileModificationTime = filemtime($fileTempName);
-
-        // Generate a SHA-256 hash of the file content
-        $fileHash = hash_file('sha256', $fileTempName);
-
-        // Package enhanced file information
-        $fileInfoEnhanced = [
-            'name'             => $fileName,
-            'extension'        => $fileExtension,
-            'size'             => $fileSize,
-            'tmpName'          => $fileTempName,
-            'typeProvided'     => $fileTypeProvided,
-            'actualType'       => $fileActualMimeType,
-            'modificationTime' => $fileModificationTime,
-            'hash'             => $fileHash,
+        return [
+            'name'             => $this->generateSafeFilename($name),
+            'originalName'     => $name,
+            'extension'        => strtolower(pathinfo($name, PATHINFO_EXTENSION)),
+            'size'             => $file['size'],
+            'humanSize'        => $this->humanFileSize($file['size']),
+            'tmpName'          => $tmpName,
+            'typeProvided'     => $file['type'],
+            'actualType'       => $finfo->file($tmpName),
+            'modificationTime' => filemtime($tmpName),
+            'hash'             => hash_file('sha256', $tmpName),
         ];
-
-        return $fileInfoEnhanced;
     }
 
     /**
-     * Extract detailed information from multiple files.
+     * Extract detailed information from multiple uploaded files.
+     * Accepts the multi-file $_FILES structure (where each key holds an array).
      *
-     * @param array $files The files array from $_FILES.
-     * @return array       An array of arrays containing enhanced file information.
-     * @throws Exception If any file is not valid.
+     * @param array $files  Multi-file array from $_FILES.
+     * @return array        Array of file info arrays.
+     * @throws Exception    If any file was not uploaded via HTTP POST.
      */
-    public function extractMultipleFileInfo(array $files)
+    public function getMultipleUploadInfo(array $files): array
     {
-        $fileInfos = [];
-        $fileCount = count($files['name']);
+        $results = [];
+        $count   = count($files['name']);
 
-        for ($index = 0; $index < $fileCount; $index++) {
-            // Check if the file is uploaded via HTTP POST
-            if (!is_uploaded_file($files['tmp_name'][$index])) {
-                throw new Exception('File upload error: Possible file upload attack.');
-            }
+        for ($i = 0; $i < $count; $i++) {
+            $results[] = $this->getUploadInfo([
+                'name'     => $files['name'][$i],
+                'tmp_name' => $files['tmp_name'][$i],
+                'type'     => $files['type'][$i],
+                'size'     => $files['size'][$i],
+                'error'    => $files['error'][$i],
+            ]);
+        }
 
-            // Extract details for the specified file at the given index
-            $fileName = $files['name'][$index];
-            $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-            $fileMimeType = $files['type'][$index];
-            $fileSize = $files['size'][$index];
-            $fileTempName = $files['tmp_name'][$index];
+        return $results;
+    }
 
-            // Actual MIME type verification using PHP's File Information functions
-            $finfo = new finfo(FILEINFO_MIME_TYPE);
-            $fileActualMimeType = $finfo->file($fileTempName);
+    // =========================================================================
+    // Upload
+    // =========================================================================
 
-            // Get file's last modification time
-            $fileModificationTime = filemtime($fileTempName);
+    /**
+     * Validate and save a single uploaded file.
+     * Any parameter left null falls back to the matching Config value.
+     *
+     * @param array       $file          Single file array from $_FILES.
+     * @param string|null $destination   Directory to save the file. Default: Config::$uploadDirectory.
+     * @param int|null    $maxSize       Max allowed file size in bytes. Default: Config::$maxFileSize.
+     * @param array|null  $allowedTypes  Allowed MIME types. Default: Config::$allowedImageTypes.
+     * @param int|null    $maxDim        Max image dimension (px) for automatic resize. null = no resize.
+     * @return array                     ['success' => true, 'data' => array]
+     *                                   or ['success' => false, 'error' => string].
+     */
+    public function uploadFile(
+        array $file,
+        ?string $destination = null,
+        ?int $maxSize = null,
+        ?array $allowedTypes = null,
+        ?int $maxDim = null
+    ): array {
+        $destination  = $destination  ?? Config::$uploadDirectory;
+        $maxSize      = $maxSize      ?? Config::$maxFileSize;
+        $allowedTypes = $allowedTypes ?? Config::$allowedImageTypes;
 
-            // Generate a SHA-256 hash of the file content
-            $fileHash = hash_file('sha256', $fileTempName);
+        // Ensure destination directory is accessible
+        try {
+            $this->ensureDirectoryExists($destination);
+        } catch (Exception $e) {
+            return ['success' => false, 'error' => 'Failed to create or access the destination directory.'];
+        }
 
-            // Package file information
-            $fileInfo = [
-                'name'             => $fileName,
-                'extension'        => $fileExtension,
-                'typeProvided'     => $fileMimeType,
-                'actualType'       => $fileActualMimeType,
-                'modificationTime' => $fileModificationTime,
-                'size'             => $fileSize,
-                'tmpName'          => $fileTempName,
-                'hash'             => $fileHash,
+        // Extract and validate upload info
+        try {
+            $info = $this->getUploadInfo($file);
+        } catch (Exception $e) {
+            return ['success' => false, 'error' => 'Invalid file upload.'];
+        }
+
+        // Validate file size
+        if ($info['size'] > $maxSize) {
+            return [
+                'success' => false,
+                'error'   => 'File size exceeds the maximum allowed limit of ' . $this->humanFileSize($maxSize) . '.',
             ];
-
-            $fileInfos[] = $fileInfo;
         }
 
-        return $fileInfos;
+        // Validate MIME type
+        if (!in_array($info['actualType'], $allowedTypes, true)) {
+            return [
+                'success' => false,
+                'error'   => 'File type "' . $info['actualType'] . '" is not allowed.',
+            ];
+        }
+
+        // Generate a collision-proof unique filename
+        $uniqueName = bin2hex(random_bytes(8)) . '.' . $info['extension'];
+        $savePath   = rtrim($destination, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $uniqueName;
+
+        // Move the file from the temp location
+        if (!move_uploaded_file($info['tmpName'], $savePath)) {
+            return ['success' => false, 'error' => 'Failed to save the uploaded file.'];
+        }
+
+        $info['savedPath']  = $savePath;
+        $info['uniqueName'] = $uniqueName;
+
+        // Resize if it is an image and a dimension limit was requested
+        if ($maxDim !== null && $this->isImageMimeType($info['actualType'])) {
+            $this->resizeImage($savePath, $maxDim);
+        }
+
+        return ['success' => true, 'data' => $info];
     }
 
     /**
-     * Ensure that a directory exists and is writable.
+     * Validate and save multiple uploaded files in one call.
+     * Any parameter left null falls back to the matching Config value.
      *
-     * @param string $path The directory path.
-     * @return string      The directory path.
-     * @throws Exception If the directory cannot be created or is not writable.
+     * @param array       $files         Multi-file array from $_FILES.
+     * @param string|null $destination   Directory to save files.
+     * @param int|null    $maxSize       Max file size per file in bytes.
+     * @param array|null  $allowedTypes  Allowed MIME types.
+     * @param int|null    $maxDim        Max image dimension for automatic resize.
+     * @return array                     Array of results, one per file (same structure as uploadFile()).
      */
-    public function ensureDirectoryExists(string $path)
-    {
-        // Check if the directory exists
-        if (!is_dir($path)) {
-            // Attempt to create the directory with safe permissions
-            if (!mkdir($path, 0755, true)) {
-                throw new Exception("Failed to create directory: $path");
-            }
+    public function uploadMultipleFiles(
+        array $files,
+        ?string $destination = null,
+        ?int $maxSize = null,
+        ?array $allowedTypes = null,
+        ?int $maxDim = null
+    ): array {
+        $results = [];
+        $count   = count($files['name']);
+
+        for ($i = 0; $i < $count; $i++) {
+            $results[] = $this->uploadFile(
+                [
+                    'name'     => $files['name'][$i],
+                    'tmp_name' => $files['tmp_name'][$i],
+                    'type'     => $files['type'][$i],
+                    'size'     => $files['size'][$i],
+                    'error'    => $files['error'][$i],
+                ],
+                $destination,
+                $maxSize,
+                $allowedTypes,
+                $maxDim
+            );
         }
 
-        // Ensure the directory is writable
-        if (!is_writable($path)) {
-            // Attempt to set the permissions if the directory is not writable
-            if (!chmod($path, 0755)) {
-                throw new Exception("Directory is not writable and cannot set permissions: $path");
-            }
-        }
-
-        return $path;
+        return $results;
     }
 
-    /**
-     * Resize and save an image to a specified path.
-     *
-     * @param string $photoPath The path to the original photo.
-     * @param int    $maxDim    The maximum dimension (width or height).
-     * @param string $savePath  The path to save the resized image (optional).
-     * @return bool             True on success, false on failure.
-     */
-    public function resizeAndSaveImage(string $photoPath, int $maxDim = null, string $savePath = null)
-    {
-        // Determine the save path
-        $savePath = $savePath ?: $photoPath;
-        $maxDim = $maxDim ?: Config::IMAGE_MAX_DIMENSION;
+    // =========================================================================
+    // Image Processing
+    // =========================================================================
 
-        // Get original image dimensions and type
-        list($width, $height, $type) = getimagesize($photoPath);
+    /**
+     * Resize an image maintaining aspect ratio.
+     * Supports JPEG, PNG, GIF, and WebP. Preserves alpha/transparency.
+     * If the image is already within bounds it is copied (or left in place) unchanged.
+     *
+     * @param string      $photoPath  Path to the source image.
+     * @param int|null    $maxDim     Max width or height in pixels. Default: Config::$imageMaxDimension.
+     * @param string|null $savePath   Output path. Default: overwrites the source file.
+     * @return bool                   True on success, false if the image type is unsupported.
+     * @throws Exception              If the image cannot be read or the destination cannot be written.
+     */
+    public function resizeImage(string $photoPath, ?int $maxDim = null, ?string $savePath = null): bool
+    {
+        $savePath = $savePath ?? $photoPath;
+        $maxDim   = $maxDim   ?? Config::$imageMaxDimension;
+
+        [$width, $height, $type] = getimagesize($photoPath);
         if (!$width || !$height) {
             throw new Exception("Failed to get image dimensions: $photoPath");
         }
 
-        // Calculate new dimensions while maintaining aspect ratio
-        $ratio = $width / $height;
-
-        if ($width > $height) {
-            $newWidth = $maxDim;
-            $newHeight = $maxDim / $ratio;
-        } else {
-            $newWidth = $maxDim * $ratio;
-            $newHeight = $maxDim;
+        // Already within bounds — just copy if saving to a different path
+        if ($width <= $maxDim && $height <= $maxDim) {
+            if ($savePath !== $photoPath) {
+                copy($photoPath, $savePath);
+            }
+            return true;
         }
 
-        // Create a new image based on the type
-        switch ($type) {
-            case IMAGETYPE_JPEG:
-                $srcImg = imagecreatefromjpeg($photoPath);
-                break;
-            case IMAGETYPE_PNG:
-                $srcImg = imagecreatefrompng($photoPath);
-                break;
-            case IMAGETYPE_GIF:
-                $srcImg = imagecreatefromgif($photoPath);
-                break;
-            default:
-                return false;
+        $ratio     = $width / $height;
+        $newWidth  = $width > $height ? $maxDim                       : (int) round($maxDim * $ratio);
+        $newHeight = $width > $height ? (int) round($maxDim / $ratio) : $maxDim;
+
+        $srcImg = $this->createImageResource($photoPath, $type);
+        if ($srcImg === null) {
+            return false; // Unsupported type
         }
 
-        if (!$srcImg) {
-            throw new Exception("Failed to create image: $photoPath");
-        }
+        $dstImg = imagecreatetruecolor($newWidth, $newHeight);
+        $this->preserveTransparency($dstImg, $type);
 
-        // Create a new true color image with the new dimensions
-        $dstImg = imagecreatetruecolor((int) round($newWidth), (int) round($newHeight));
+        imagecopyresampled($dstImg, $srcImg, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+        $result = $this->saveImageResource($dstImg, $savePath, $type);
 
-        // Preserve transparency for PNG and GIF images
-        if ($type == IMAGETYPE_PNG || $type == IMAGETYPE_GIF) {
-            imagecolortransparent($dstImg, imagecolorallocatealpha($dstImg, 0, 0, 0, 127));
-            imagealphablending($dstImg, false);
-            imagesavealpha($dstImg, true);
-        }
-
-        // Copy and resize part of the image with resampling
-        imagecopyresampled(
-            $dstImg,
-            $srcImg,
-            0,
-            0,
-            0,
-            0,
-            (int) round($newWidth),
-            (int) round($newHeight),
-            $width,
-            $height
-        );
-
-        // Save the resized image based on the original type
-        switch ($type) {
-            case IMAGETYPE_JPEG:
-                $result = imagejpeg($dstImg, $savePath, 90); // Adjust quality as needed
-                break;
-            case IMAGETYPE_PNG:
-                $result = imagepng($dstImg, $savePath, 6); // Compression level: 0 (no compression) to 9
-                break;
-            case IMAGETYPE_GIF:
-                $result = imagegif($dstImg, $savePath);
-                break;
-            default:
-                $result = false;
-        }
-
-        if (!$result) {
-
-        }
-
-        // Free up memory
         imagedestroy($srcImg);
         imagedestroy($dstImg);
 
@@ -235,161 +241,466 @@ class FileManager
     }
 
     /**
-     * Upload an image to a specified directory with optional resizing.
+     * Convert an image to WebP format.
+     * Supports JPEG, PNG, GIF, and WebP sources. Preserves PNG/GIF transparency.
      *
-     * @param array  $file         The file array from $_FILES.
-     * @param string $destination  The directory to save the uploaded file.
-     * @param int    $maxSize      The maximum allowed file size in bytes (optional).
-     * @param int    $maxDim       The maximum dimension for resizing (optional).
-     * @param array  $allowedTypes An array of allowed MIME types.
-     * @return array               An array containing 'success' and 'data' or 'error'.
+     * @param string      $imagePath   Path to the source image.
+     * @param string|null $outputPath  Output file path.
+     *                                 Default: same directory and name as source, with .webp extension.
+     * @param int         $quality     WebP quality 0–100. Default: 80.
+     * @return string|false            Absolute path to the created WebP file, or false on failure.
+     * @throws Exception               If the source image does not exist or cannot be read.
      */
-    public function uploadFile(array $file, string $destination = null, int $maxSize = null, array $allowedTypes = null)
+    public function convertToWebp(string $imagePath, ?string $outputPath = null, int $quality = 80)
     {
-        // Use defaults from Config if parameters are not provided
-        $destination = $destination ?: Config::UPLOAD_DIRECTORY;
-        $maxSize = $maxSize ?: Config::MAX_FILE_SIZE;
-        $allowedTypes = $allowedTypes ?: Config::ALLOWED_IMAGE_TYPES;
-
-        // Ensure the directory exists
-        try {
-            $this->ensureDirectoryExists($destination);
-        } catch (Exception $e) {
-            return [
-                'success' => false,
-                'error' => 'Failed to create or access the destination directory.'
-            ];
+        if (!file_exists($imagePath) || !is_readable($imagePath)) {
+            throw new Exception("Image not found or not readable: $imagePath");
         }
 
-        // Extract file info
-        try {
-            $fileInfo = $this->extractFileInfo($file);
-        } catch (Exception $e) {
-            return [
-                'success' => false,
-                'error' => 'Invalid file upload.'
-            ];
+        [$width, $height, $type] = getimagesize($imagePath);
+        if (!$width || !$height) {
+            throw new Exception("Not a valid image: $imagePath");
         }
 
-        // Validate the file size
-        if ($fileInfo['size'] > $maxSize) {
-            return [
-                'success' => false,
-                'error' => 'File size exceeds the maximum allowed limit.'
-            ];
+        $srcImg = $this->createImageResource($imagePath, $type);
+        if ($srcImg === null) {
+            return false; // Unsupported image type
         }
 
-        // Validate the file type
-        if (!in_array($fileInfo['actualType'], $allowedTypes)) {
-            return [
-                'success' => false,
-                'error' => 'Invalid file type.'
-            ];
+        // For PNG/GIF, composite onto a transparent canvas to preserve alpha
+        if (in_array($type, [IMAGETYPE_PNG, IMAGETYPE_GIF], true)) {
+            $canvas = imagecreatetruecolor($width, $height);
+            imagecolortransparent($canvas, imagecolorallocatealpha($canvas, 0, 0, 0, 127));
+            imagealphablending($canvas, false);
+            imagesavealpha($canvas, true);
+            imagecopy($canvas, $srcImg, 0, 0, 0, 0, $width, $height);
+            imagedestroy($srcImg);
+            $srcImg = $canvas;
         }
 
-        // Generate a unique file name
-        $uniqueName = uniqid('img_', true) . '.' . $fileInfo['extension'];
-        $savePath = rtrim($destination, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $uniqueName;
+        $outputPath = $outputPath ?? preg_replace('/\.[^.]+$/', '.webp', $imagePath);
 
-        // Move the uploaded file to the destination
-        if (!move_uploaded_file($fileInfo['tmpName'], $savePath)) {
-            return [
-                'success' => false,
-                'error' => 'Failed to save the uploaded file.'
-            ];
+        $result = imagewebp($srcImg, $outputPath, $quality);
+        imagedestroy($srcImg);
+
+        return $result ? $outputPath : false;
+    }
+
+    // =========================================================================
+    // Filesystem — Read / Write / Copy / Move / Delete
+    // =========================================================================
+
+    /**
+     * Read a file's contents into a string.
+     *
+     * @param string $path  Path to the file.
+     * @return string       File contents.
+     * @throws Exception    If the file does not exist or cannot be read.
+     */
+    public function readFile(string $path): string
+    {
+        if (!file_exists($path) || !is_readable($path)) {
+            throw new Exception("File not found or not readable: $path");
         }
 
-        // Update file info with the new save path and unique name
-        $fileInfo['savedPath'] = $savePath;
-        $fileInfo['uniqueName'] = $uniqueName;
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new Exception("Failed to read file: $path");
+        }
 
-        // Return success and file info
-        return [
-            'success' => true,
-            'data' => $fileInfo
-        ];
+        return $contents;
     }
 
     /**
-     * Delete a file.
+     * Write (or append) content to a file.
+     * Creates parent directories if they do not exist.
      *
-     * @param string $filePath The path to the file to delete.
-     * @return bool            True on success, false on failure.
+     * @param string $path     Destination file path.
+     * @param string $content  Content to write.
+     * @param bool   $append   Append instead of overwriting. Default: false.
+     * @return bool            True on success.
+     * @throws Exception       If the directory cannot be created.
      */
-    public function deleteFile(string $filePath)
+    public function writeFile(string $path, string $content, bool $append = false): bool
     {
-        if (file_exists($filePath)) {
-            if (unlink($filePath)) {
-                return true;
-            } else {
-                return false;
+        $this->ensureDirectoryExists(dirname($path));
+        $flags = $append ? FILE_APPEND | LOCK_EX : LOCK_EX;
+        return file_put_contents($path, $content, $flags) !== false;
+    }
+
+    /**
+     * Copy a file to a new location.
+     * Creates the destination directory if it does not exist.
+     *
+     * @param string $source       Source file path.
+     * @param string $destination  Destination file path.
+     * @return bool                True on success.
+     * @throws Exception           If the source does not exist or the directory cannot be created.
+     */
+    public function copyFile(string $source, string $destination): bool
+    {
+        if (!file_exists($source)) {
+            throw new Exception("Source file not found: $source");
+        }
+
+        $this->ensureDirectoryExists(dirname($destination));
+        return copy($source, $destination);
+    }
+
+    /**
+     * Move (rename) a file.
+     * Creates the destination directory if it does not exist.
+     *
+     * @param string $source       Source file path.
+     * @param string $destination  Destination file path.
+     * @return bool                True on success.
+     * @throws Exception           If the source does not exist.
+     */
+    public function moveFile(string $source, string $destination): bool
+    {
+        if (!file_exists($source)) {
+            throw new Exception("Source file not found: $source");
+        }
+
+        $this->ensureDirectoryExists(dirname($destination));
+        return rename($source, $destination);
+    }
+
+    /**
+     * Delete a file. Returns true if the file is gone regardless of whether it existed.
+     *
+     * @param string $filePath  Path to the file.
+     * @return bool             True if the file no longer exists, false on unlink failure.
+     */
+    public function deleteFile(string $filePath): bool
+    {
+        if (!file_exists($filePath)) {
+            return true; // Already gone — idempotent success
+        }
+
+        return unlink($filePath);
+    }
+
+    // =========================================================================
+    // Filesystem — Directories
+    // =========================================================================
+
+    /**
+     * Ensure a directory exists and is writable. Creates missing parent directories.
+     *
+     * @param string $path  Directory path.
+     * @return string       The resolved directory path.
+     * @throws Exception    If the directory cannot be created or made writable.
+     */
+    public function ensureDirectoryExists(string $path): string
+    {
+        if (!is_dir($path)) {
+            // Suppress warning — race condition between is_dir() and mkdir() on concurrent requests
+            if (!@mkdir($path, 0755, true) && !is_dir($path)) {
+                throw new Exception("Failed to create directory: $path");
             }
         }
-        return false;
+
+        if (!is_writable($path)) {
+            if (!chmod($path, 0755) || !is_writable($path)) {
+                throw new Exception("Directory is not writable: $path");
+            }
+        }
+
+        return $path;
     }
 
     /**
-     * Get a list of files in a directory.
+     * List files in a directory, sorted alphabetically.
      *
-     * @param string $directory The directory path.
-     * @param bool   $recursive Whether to include files in subdirectories.
-     * @return array            An array of file paths.
+     * @param string $directory  Directory path.
+     * @param bool   $recursive  Include files in subdirectories. Default: false.
+     * @param string $extension  Filter by extension, e.g. 'jpg'. Empty string = all files.
+     * @return array             Sorted array of absolute file paths.
      */
-    public function listFiles(string $directory, bool $recursive = false)
+    public function listFiles(string $directory, bool $recursive = false, string $extension = ''): array
     {
-        $files = [];
-
         if (!is_dir($directory)) {
-            return $files;
+            return [];
         }
+
+        $files = [];
 
         if ($recursive) {
             $iterator = new \RecursiveIteratorIterator(
                 new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)
             );
-            foreach ($iterator as $file) {
-                if ($file->isFile()) {
-                    $files[] = $file->getPathname();
+            foreach ($iterator as $item) {
+                if ($item->isFile()) {
+                    $files[] = $item->getPathname();
                 }
             }
         } else {
-            foreach (new \DirectoryIterator($directory) as $fileInfo) {
-                if ($fileInfo->isFile()) {
-                    $files[] = $fileInfo->getPathname();
+            foreach (new \DirectoryIterator($directory) as $item) {
+                if ($item->isFile()) {
+                    $files[] = $item->getPathname();
                 }
             }
         }
 
-        return $files;
+        // Optional extension filter
+        if ($extension !== '') {
+            $ext   = strtolower(ltrim($extension, '.'));
+            $files = array_filter($files, function ($f) use ($ext) {
+                return strtolower(pathinfo($f, PATHINFO_EXTENSION)) === $ext;
+            });
+        }
+
+        sort($files);
+        return array_values($files);
     }
 
     /**
-     * Download a file to the browser.
+     * Delete all files inside a directory without deleting the directory itself.
+     * Subdirectories are left untouched.
      *
-     * @param string $filePath The path to the file to download.
-     * @param string $filename The name to give the downloaded file.
-     * @return void
-     * @throws Exception If the file cannot be read.
+     * @param string $path  Directory path.
+     * @return bool         True if every file was deleted, false if any deletion failed.
      */
-    public function downloadFile(string $filePath, string $filename = null)
+    public function cleanDirectory(string $path): bool
+    {
+        if (!is_dir($path)) {
+            return false;
+        }
+
+        $success = true;
+        foreach (new \DirectoryIterator($path) as $item) {
+            if ($item->isFile() && !unlink($item->getPathname())) {
+                $success = false;
+            }
+        }
+
+        return $success;
+    }
+
+    // =========================================================================
+    // File Info & Utilities
+    // =========================================================================
+
+    /**
+     * Get detailed information about an existing file on disk (not an upload).
+     *
+     * @param string $path  Path to the file.
+     * @return array        Associative array with name, path, extension, size, humanSize,
+     *                      mimeType, modificationTime, hash.
+     * @throws Exception    If the file does not exist or is not readable.
+     */
+    public function getFileInfo(string $path): array
+    {
+        if (!file_exists($path) || !is_readable($path)) {
+            throw new Exception("File not found or not readable: $path");
+        }
+
+        $size = filesize($path);
+
+        return [
+            'name'             => basename($path),
+            'path'             => realpath($path),
+            'extension'        => strtolower(pathinfo($path, PATHINFO_EXTENSION)),
+            'size'             => $size,
+            'humanSize'        => $this->humanFileSize($size),
+            'mimeType'         => $this->getMimeType($path),
+            'modificationTime' => filemtime($path),
+            'hash'             => hash_file('sha256', $path),
+        ];
+    }
+
+    /**
+     * Get the MIME type of a file on disk.
+     *
+     * @param string $path  Path to the file.
+     * @return string       MIME type string, e.g. 'image/jpeg'.
+     * @throws Exception    If the file does not exist.
+     */
+    public function getMimeType(string $path): string
+    {
+        if (!file_exists($path)) {
+            throw new Exception("File not found: $path");
+        }
+
+        return (new finfo(FILEINFO_MIME_TYPE))->file($path);
+    }
+
+    /**
+     * Convert a byte count to a human-readable size string.
+     *
+     * @param int $bytes     File size in bytes.
+     * @param int $decimals  Number of decimal places. Default: 2.
+     * @return string        e.g. '1.50 MB', '820 B', '2.34 GB'.
+     */
+    public function humanFileSize(int $bytes, int $decimals = 2): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        $i     = 0;
+        $size  = (float) max(0, $bytes);
+
+        while ($size >= 1024 && $i < count($units) - 1) {
+            $size /= 1024;
+            $i++;
+        }
+
+        return round($size, $i === 0 ? 0 : $decimals) . ' ' . $units[$i];
+    }
+
+    /**
+     * Generate a safe filename by stripping path traversal components and
+     * removing characters that are unsafe in filenames.
+     *
+     * @param string $name  Original filename (may include path or extension).
+     * @return string       Sanitized filename safe to use on any OS.
+     */
+    public function generateSafeFilename(string $name): string
+    {
+        // Strip any directory component — prevents traversal
+        $name = basename($name);
+
+        // Collapse whitespace to underscores
+        $name = preg_replace('/\s+/', '_', $name);
+
+        // Collapse consecutive dots (prevents tricks like "file..php")
+        $name = preg_replace('/\.{2,}/', '.', $name);
+
+        // Keep only safe characters: alphanumeric, underscore, hyphen, dot
+        $name = preg_replace('/[^\w\-.]/', '', $name);
+
+        // Strip leading dots and dashes
+        $name = ltrim($name, '.-');
+
+        return $name === '' ? 'file' : $name;
+    }
+
+    // =========================================================================
+    // Download
+    // =========================================================================
+
+    /**
+     * Stream a file to the browser as a forced download.
+     * Clears any prior output buffer and sets appropriate cache-control headers.
+     *
+     * @param string      $filePath  Absolute path to the file.
+     * @param string|null $filename  Filename shown in the browser's save dialog.
+     *                               Default: basename of $filePath.
+     * @return void
+     * @throws Exception             If the file does not exist or cannot be read.
+     */
+    public function downloadFile(string $filePath, ?string $filename = null): void
     {
         if (!file_exists($filePath) || !is_readable($filePath)) {
             throw new Exception('File not found or cannot be read.');
         }
 
-        $filename = $filename ?: basename($filePath);
+        $filename = $filename ?? basename($filePath);
         $mimeType = mime_content_type($filePath);
         $fileSize = filesize($filePath);
 
-        // Set headers
+        // Flush any previously buffered output
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
+
         header('Content-Description: File Transfer');
         header('Content-Type: ' . $mimeType);
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Disposition: attachment; filename="' . addslashes($filename) . '"');
         header('Content-Length: ' . $fileSize);
+        header('Cache-Control: no-cache, must-revalidate');
+        header('Pragma: no-cache');
+        header('Expires: 0');
 
-        // Read the file
         readfile($filePath);
         exit();
     }
 
+    // =========================================================================
+    // Private helpers
+    // =========================================================================
+
+    /**
+     * Create a GD image resource from a file, based on the IMAGETYPE_* constant.
+     * Returns null for unsupported types, throws on read failure.
+     *
+     * @param string $path  Path to the image file.
+     * @param int    $type  IMAGETYPE_* constant from getimagesize().
+     * @return resource|null
+     * @throws Exception
+     */
+    private function createImageResource(string $path, int $type)
+    {
+        switch ($type) {
+            case IMAGETYPE_JPEG:
+                $img = imagecreatefromjpeg($path);
+                break;
+            case IMAGETYPE_PNG:
+                $img = imagecreatefrompng($path);
+                break;
+            case IMAGETYPE_GIF:
+                $img = imagecreatefromgif($path);
+                break;
+            case IMAGETYPE_WEBP:
+                $img = imagecreatefromwebp($path);
+                break;
+            default:
+                return null;
+        }
+
+        if ($img === false) {
+            throw new Exception("Failed to load image: $path");
+        }
+
+        return $img;
+    }
+
+    /**
+     * Save a GD image resource to disk in the format matching the IMAGETYPE_* constant.
+     *
+     * @param resource $img      GD image resource.
+     * @param string   $path     Output file path.
+     * @param int      $type     IMAGETYPE_* constant.
+     * @return bool
+     */
+    private function saveImageResource($img, string $path, int $type): bool
+    {
+        switch ($type) {
+            case IMAGETYPE_JPEG:
+                return imagejpeg($img, $path, 90);
+            case IMAGETYPE_PNG:
+                return imagepng($img, $path, 6);
+            case IMAGETYPE_GIF:
+                return imagegif($img, $path);
+            case IMAGETYPE_WEBP:
+                return imagewebp($img, $path, 90);
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Configure a GD image resource to preserve transparency for PNG, GIF, and WebP.
+     *
+     * @param resource $img   GD image resource.
+     * @param int      $type  IMAGETYPE_* constant.
+     */
+    private function preserveTransparency($img, int $type): void
+    {
+        if (in_array($type, [IMAGETYPE_PNG, IMAGETYPE_GIF, IMAGETYPE_WEBP], true)) {
+            imagecolortransparent($img, imagecolorallocatealpha($img, 0, 0, 0, 127));
+            imagealphablending($img, false);
+            imagesavealpha($img, true);
+        }
+    }
+
+    /**
+     * Check whether a MIME type string represents an image.
+     *
+     * @param string $mimeType  MIME type, e.g. 'image/jpeg'.
+     * @return bool
+     */
+    private function isImageMimeType(string $mimeType): bool
+    {
+        return strpos($mimeType, 'image/') === 0;
+    }
 }

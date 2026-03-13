@@ -3,7 +3,6 @@ namespace JiFramework\Core\Logger;
 
 use JiFramework\Config\Config;
 use JiFramework\Core\Utilities\DateTimeHelper;
-use Exception;
 
 class Logger
 {
@@ -47,7 +46,7 @@ class Logger
     private $maxFileSize;
 
     /**
-     * @var int Max number of log files to keep.
+     * @var int Max number of archived log files to keep.
      */
     private $maxFiles;
 
@@ -57,65 +56,69 @@ class Logger
     private $logEnabled;
 
     /**
-     * @var string Date format in logs.
+     * @var string Date format used in log entries.
      */
-    private $dateFormat = 'Y-m-d H:i:s'; // Defined directly in the class
+    private $dateFormat = 'Y-m-d H:i:s';
 
     /**
      * Constructor.
      *
      * @param string|null $logFilePath Optional log file path. If null, uses default from Config.
-     * @throws Exception
      */
     public function __construct($logFilePath = null)
     {
-        // Initialize configuration properties
-        $this->logEnabled = Config::LOG_ENABLED;
+        $this->logEnabled = Config::$logEnabled;
 
         if (!$this->logEnabled) {
             return;
         }
 
-        // Set the current log level
-        $configLogLevel = strtoupper(Config::LOG_LEVEL);
+        $configLogLevel        = strtoupper(Config::$logLevel);
         $this->currentLogLevel = $this->logLevels[$configLogLevel] ?? $this->logLevels['DEBUG'];
+        $this->maxFileSize     = Config::$logMaxFileSize;
+        $this->maxFiles        = Config::$logMaxFiles;
 
-        // Determine the log file path
-        $defaultLogFilePath = Config::LOG_FILE_PATH . Config::LOG_FILE_NAME;
-        $this->logFilePath = $logFilePath ?? $defaultLogFilePath;
+        $defaultLogFilePath = Config::$logFilePath . Config::$logFileName;
+        $this->logFilePath  = $logFilePath ?? $defaultLogFilePath;
 
-        // Set max file size and max files
-        $this->maxFileSize = Config::LOG_MAX_FILE_SIZE;
-        $this->maxFiles = Config::LOG_MAX_FILES;
-
-        // Ensure log directory exists
-        $logDir = dirname($this->logFilePath);
-        if (!is_dir($logDir)) {
-            mkdir($logDir, 0777, true);
-        }
-
-        // Open the log file
         $this->openLogFile();
     }
 
     /**
-     * Open the log file.
+     * Open (or re-open) the log file, creating the directory if needed.
+     * On failure, logging is silently disabled rather than crashing the app.
      *
      * @return void
-     * @throws Exception
      */
     private function openLogFile()
     {
-        // Rotate log files if necessary
-        if(file_exists($this->logFilePath) && filesize($this->logFilePath) >= $this->maxFileSize) {
+        $logDir = dirname($this->logFilePath);
+
+        if (!is_dir($logDir) && !@mkdir($logDir, 0755, true)) {
+            trigger_error(
+                '[JiFramework] Logger: cannot create log directory: ' . $logDir,
+                E_USER_WARNING
+            );
+            $this->logEnabled = false;
+            return;
+        }
+
+        if (file_exists($this->logFilePath) && filesize($this->logFilePath) >= $this->maxFileSize) {
             $this->rotateLogs();
         }
 
-        // Open the log file
-        $this->logFileHandle = fopen($this->logFilePath, 'a');
-        if (!$this->logFileHandle) {
-            throw new Exception('Could not open log file for writing.');
+        $handle = @fopen($this->logFilePath, 'a');
+
+        if ($handle === false) {
+            trigger_error(
+                '[JiFramework] Logger: cannot open log file for writing: ' . $this->logFilePath,
+                E_USER_WARNING
+            );
+            $this->logEnabled = false;
+            return;
         }
+
+        $this->logFileHandle = $handle;
     }
 
     /**
@@ -127,35 +130,33 @@ class Logger
     {
         $logFile = $this->logFilePath;
 
-        // Delete oldest log file if max files exceeded
         for ($i = $this->maxFiles - 1; $i >= 0; $i--) {
             $oldLogFile = $logFile . '.' . $i;
             $newLogFile = $logFile . '.' . ($i + 1);
 
             if (file_exists($oldLogFile)) {
                 if ($i + 1 >= $this->maxFiles) {
-                    unlink($oldLogFile); // Delete oldest log file
+                    unlink($oldLogFile);
                 } else {
-                    rename($oldLogFile, $newLogFile); // Rename log files
+                    rename($oldLogFile, $newLogFile);
                 }
             }
         }
 
-        // Rename current log file
         rename($logFile, $logFile . '.0');
     }
 
     /**
-     * Log a message with a given level.
+     * Log a message at the given level.
      *
      * @param string $level
      * @param string $message
-     * @param array $context
+     * @param array  $context
      * @return void
      */
     public function log($level, $message, array $context = [])
     {
-        if (!$this->logEnabled) {
+        if (!$this->logEnabled || !$this->logFileHandle) {
             return;
         }
 
@@ -168,41 +169,53 @@ class Logger
             return;
         }
 
-        $date = DateTimeHelper::getCurrentDatetime($this->dateFormat);
-        $message = $this->interpolateMessage($message, $context);
+        $date       = DateTimeHelper::now($this->dateFormat);
+        $message    = $this->interpolateMessage($message, $context);
         $logMessage = str_replace(
             ['{date}', '{level}', '{message}'],
-            [$date, $level, $message],
+            [$date,    $level,    $message],
             $this->logFormat
         );
 
-        fwrite($this->logFileHandle, $logMessage . PHP_EOL);
+        $result = @fwrite($this->logFileHandle, $logMessage . PHP_EOL);
+
+        if ($result === false) {
+            trigger_error(
+                '[JiFramework] Logger: failed to write to log file: ' . $this->logFilePath,
+                E_USER_WARNING
+            );
+        }
     }
 
     /**
-     * Interpolate context values into the message placeholders.
+     * Interpolate {placeholder} tokens in the message using context values.
      *
      * @param string $message
-     * @param array $context
+     * @param array  $context
      * @return string
      */
     private function interpolateMessage($message, array $context = [])
     {
-        // Replace placeholders in message
-        if (!empty($context)) {
-            foreach ($context as $key => $val) {
-                // Ensure that the value is a string
-                if (!is_scalar($val)) {
-                    $val = json_encode($val);
-                }
-                $message = str_replace('{' . $key . '}', $val, $message);
-            }
+        if (empty($context)) {
+            return $message;
         }
+
+        foreach ($context as $key => $val) {
+            if (is_bool($val)) {
+                $val = $val ? 'true' : 'false';
+            } elseif (is_null($val)) {
+                $val = 'null';
+            } elseif (!is_scalar($val)) {
+                $val = json_encode($val);
+            }
+            $message = str_replace('{' . $key . '}', $val, $message);
+        }
+
         return $message;
     }
 
     /**
-     * Close the log file when the object is destroyed.
+     * Close the log file handle on object destruction.
      */
     public function __destruct()
     {
@@ -212,83 +225,65 @@ class Logger
     }
 
     /**
-     * Set a custom log file path.
+     * Switch to a different log file at runtime.
      *
      * @param string $logFilePath
-     * @throws Exception
+     * @return void
      */
     public function setLogFile($logFilePath)
     {
+        if (!$this->logEnabled) {
+            return;
+        }
+
         if ($this->logFileHandle) {
             fclose($this->logFileHandle);
+            $this->logFileHandle = null;
         }
 
         $this->logFilePath = $logFilePath;
-
-        // Ensure log directory exists
-        $logDir = dirname($this->logFilePath);
-        if (!is_dir($logDir)) {
-            mkdir($logDir, 0777, true);
-        }
-
-        // Open the new log file
         $this->openLogFile();
     }
 
-    /**
-     * Log debug message.
-     *
-     * @param string $message
-     * @param array $context
-     */
+    // ─── Convenience methods ──────────────────────────────────────────────────
+
     public function debug($message, array $context = [])
     {
         $this->log('DEBUG', $message, $context);
     }
 
-    /**
-     * Log info message.
-     *
-     * @param string $message
-     * @param array $context
-     */
     public function info($message, array $context = [])
     {
         $this->log('INFO', $message, $context);
     }
 
-    /**
-     * Log warning message.
-     *
-     * @param string $message
-     * @param array $context
-     */
+    public function notice($message, array $context = [])
+    {
+        $this->log('NOTICE', $message, $context);
+    }
+
     public function warning($message, array $context = [])
     {
         $this->log('WARNING', $message, $context);
     }
 
-    /**
-     * Log error message.
-     *
-     * @param string $message
-     * @param array $context
-     */
     public function error($message, array $context = [])
     {
         $this->log('ERROR', $message, $context);
     }
 
-    /**
-     * Log critical message.
-     *
-     * @param string $message
-     * @param array $context
-     */
     public function critical($message, array $context = [])
     {
         $this->log('CRITICAL', $message, $context);
     }
+
+    public function alert($message, array $context = [])
+    {
+        $this->log('ALERT', $message, $context);
+    }
+
+    public function emergency($message, array $context = [])
+    {
+        $this->log('EMERGENCY', $message, $context);
+    }
 }
-
-

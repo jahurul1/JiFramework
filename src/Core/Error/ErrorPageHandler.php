@@ -1,6 +1,8 @@
 <?php
 namespace JiFramework\Core\Error;
 
+use JiFramework\Config\Config;
+
 class ErrorPageHandler
 {
     /**
@@ -78,9 +80,15 @@ class ErrorPageHandler
      */
     private function renderHtmlError($errorCode, $message)
     {
-        // Error page content
-        $errorTitle = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
-        $errorMessage = htmlspecialchars($this->getDetailedErrorMessage($errorCode, $message), ENT_QUOTES, 'UTF-8');
+        $errorTitle   = htmlspecialchars($this->defaultMessages[$errorCode] ?? 'Error', ENT_QUOTES, 'UTF-8');
+        $errorMessage = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+
+        // Use custom template if configured
+        $template = Config::$errorTemplate ?? null;
+        if ($template && file_exists($template)) {
+            include $template;
+            return;
+        }
 
         // Output the error page
         echo <<<HTML
@@ -198,29 +206,24 @@ class ErrorPageHandler
      *
      * @return bool
      */
-    private function isJsonRequest()
+    private function isJsonRequest(): bool
     {
-        if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) &&
+            strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
             return true;
         }
 
-        if (!empty($_SERVER['CONTENT_TYPE']) && strpos($_SERVER['CONTENT_TYPE'], 'application/json') !== false) {
+        if (!empty($_SERVER['HTTP_ACCEPT']) &&
+            strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
+            return true;
+        }
+
+        if (!empty($_SERVER['CONTENT_TYPE']) &&
+            strpos($_SERVER['CONTENT_TYPE'], 'application/json') !== false) {
             return true;
         }
 
         return false;
-    }
-
-    /**
-     * Get a detailed error message.
-     *
-     * @param int $errorCode
-     * @param string $message
-     * @return string
-     */
-    private function getDetailedErrorMessage($errorCode, $message)
-    {
-        return $this->defaultMessages[$errorCode] ?? 'An error occurred';
     }
 }
 

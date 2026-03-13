@@ -3,227 +3,341 @@ namespace JiFramework\Core\Security;
 
 class Encryption
 {
+    // =========================================================================
+    // Internal constants
+    // =========================================================================
+
+    private const CIPHER     = 'aes-256-gcm';
+    private const KEY_SIZE   = 32; // bytes — 256 bits
+    private const NONCE_SIZE = 12; // bytes — 96 bits (GCM recommendation)
+    private const TAG_SIZE   = 16; // bytes — 128 bits (maximum GCM tag)
+    private const SALT_SIZE  = 16; // bytes — 128 bits
+
+    // =========================================================================
+    // Symmetric encryption — AES-256-GCM
+    // =========================================================================
+
     /**
-     * Generate a random encryption key.
+     * Encrypt plaintext using AES-256-GCM.
      *
-     * @param int $length Length of the key in bytes. For AES-256, the key length should be 32 bytes.
-     * @return string     The generated key in hexadecimal representation.
+     * A fresh random nonce is generated on every call — never reused.
+     * Authentication is built into GCM: no separate HMAC required.
+     *
+     * @param string $plaintext Data to encrypt.
+     * @param string $key       32-byte key in hexadecimal (64 hex chars). Use generateKey() to produce one.
+     * @return string           Base64-encoded output: nonce[12] + tag[16] + ciphertext.
+     *
+     * @throws \InvalidArgumentException If the key is not a valid 64-character hex string.
+     * @throws \RuntimeException         If the OpenSSL encryption call fails.
      */
-    public function generateKey($length = 32)
+    public function encrypt(string $plaintext, string $key): string
     {
-        return bin2hex(random_bytes($length));
+        $binaryKey = $this->parseKey($key);
+
+        return base64_encode($this->encryptRaw($plaintext, $binaryKey));
     }
 
     /**
-     * Encrypt data using AES-256-CBC encryption.
+     * Decrypt a ciphertext produced by encrypt().
      *
-     * @param string $plaintext The data to encrypt.
-     * @param string $key       The encryption key in hexadecimal.
-     * @param string $iv        Optional initialization vector in hexadecimal. If not provided, a random IV will be generated.
-     * @return string          The base64-encoded encrypted data.
+     * Returns false when the ciphertext is malformed, the key is wrong,
+     * or the authentication tag does not match (tampered data).
+     *
+     * @param string $ciphertext Base64-encoded ciphertext from encrypt().
+     * @param string $key        The same 64-character hex key used to encrypt.
+     * @return string|false      Decrypted plaintext, or false on any failure.
+     *
+     * @throws \InvalidArgumentException If the key is not a valid 64-character hex string.
      */
-    public function encrypt($plaintext, $key, $iv = null)
+    public function decrypt(string $ciphertext, string $key)
     {
-        // Convert key and IV from hex to binary
-        $key = hex2bin($key);
+        $binaryKey = $this->parseKey($key);
+        $data      = base64_decode($ciphertext, true);
 
-        // Generate a random IV if not provided
-        if ($iv === null) {
-            $ivLength = openssl_cipher_iv_length('aes-256-cbc');
-            $iv = random_bytes($ivLength);
-        } else {
-            $iv = hex2bin($iv);
+        if ($data === false) {
+            return false;
         }
 
-        // Encrypt the data
-        $ciphertext = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        return $this->decryptRaw($data, $binaryKey);
+    }
 
-        // Generate HMAC for authentication
-        $hmac = hash_hmac('sha256', $ciphertext, $key, true);
+    // =========================================================================
+    // Password-based encryption — PBKDF2 + AES-256-GCM
+    // =========================================================================
 
-        // Concatenates the IV, HMAC, and encrypted data, separated by '::', and encodes in base64
-        $encryptedData = base64_encode($iv . '::' . $ciphertext . '::' . $hmac);
+    /**
+     * Encrypt plaintext using a human-supplied password.
+     *
+     * The password is stretched into a 256-bit key using PBKDF2-SHA256 with a
+     * fresh random salt. The salt is embedded in the output so decryptWithPassword()
+     * can re-derive the key automatically — no separate salt storage required.
+     *
+     * Use this when you have a password rather than a stored key.
+     * Use encrypt() when you already have a proper 32-byte random key.
+     *
+     * @param string $plaintext  Data to encrypt.
+     * @param string $password   Password of any length.
+     * @param int    $iterations PBKDF2 iteration count. Higher = slower = more brute-force resistant. Default: 100,000.
+     * @return string            Base64-encoded output: salt[16] + nonce[12] + tag[16] + ciphertext.
+     *
+     * @throws \RuntimeException If the OpenSSL encryption call fails.
+     */
+    public function encryptWithPassword(string $plaintext, string $password, int $iterations = 100000): string
+    {
+        $salt = random_bytes(self::SALT_SIZE);
+        $key  = hash_pbkdf2('sha256', $password, $salt, $iterations, self::KEY_SIZE, true);
 
-        // Return the encrypted data
-        return $encryptedData;
-
+        return base64_encode($salt . $this->encryptRaw($plaintext, $key));
     }
 
     /**
-     * Decrypt data using AES-256-CBC encryption.
+     * Decrypt a ciphertext produced by encryptWithPassword().
      *
-     * @param string $ciphertext The encrypted data in hexadecimal.
-     * @param string $key        The encryption key in hexadecimal.
-     * @return string            The decrypted plaintext.
+     * Returns false when the ciphertext is malformed, the password is wrong,
+     * or the authentication tag does not match (tampered data).
+     *
+     * @param string $ciphertext Base64-encoded ciphertext from encryptWithPassword().
+     * @param string $password   The same password used to encrypt.
+     * @param int    $iterations The same PBKDF2 iteration count used to encrypt.
+     * @return string|false      Decrypted plaintext, or false on any failure.
      */
-    public function decrypt($ciphertext, $key)
+    public function decryptWithPassword(string $ciphertext, string $password, int $iterations = 100000)
     {
-        // Decodes from base64 to get the IV and encrypted data
-		$data = base64_decode($ciphertext);
+        $data = base64_decode($ciphertext, true);
 
-        // Separates the IV, ciphertext, and HMAC
-		$explodedData = explode('::', $data, 3);
-
-        // Check if we have IV, ciphertext, and HMAC
-		if (count($explodedData) !== 3) {
-			// Return false if any part is missing
-			return false;
-		}
-
-        // Convert key from hex to binary
-        $key = hex2bin($key);
-
-        // Extract the IV, ciphertext, and HMAC
-        $iv = $explodedData[0];
-        $ciphertext = $explodedData[1];
-        $hmac = $explodedData[2];
-
-        // Verify HMAC
-        $calculatedHmac = hash_hmac('sha256', $ciphertext, $key, true);
-        if (!hash_equals($hmac, $calculatedHmac)) {
-            return false; // HMAC verification failed
+        if ($data === false) {
+            return false;
         }
 
-        // Decrypt the data
-        $plaintext = openssl_decrypt($ciphertext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        // Minimum valid length: salt[16] + nonce[12] + tag[16] = 44 bytes
+        if (strlen($data) < self::SALT_SIZE + self::NONCE_SIZE + self::TAG_SIZE) {
+            return false;
+        }
 
-        return $plaintext;
+        $salt      = substr($data, 0, self::SALT_SIZE);
+        $encrypted = substr($data, self::SALT_SIZE);
+        $key       = hash_pbkdf2('sha256', $password, $salt, $iterations, self::KEY_SIZE, true);
+
+        return $this->decryptRaw($encrypted, $key);
+    }
+
+    // =========================================================================
+    // Key management
+    // =========================================================================
+
+    /**
+     * Generate a cryptographically secure random encryption key.
+     *
+     * Store the result in an environment variable or secrets manager.
+     * Never hardcode keys in source code.
+     *
+     * @return string 64-character hexadecimal string (32 bytes / 256 bits).
+     */
+    public function generateKey(): string
+    {
+        return bin2hex(random_bytes(self::KEY_SIZE));
     }
 
     /**
-     * Generate a secure encryption key from a password using PBKDF2.
+     * Derive a deterministic encryption key from a password using PBKDF2-SHA256.
      *
-     * @param string $password The password to derive the key from.
-     * @param string $salt     Optional salt in hexadecimal. If not provided, a random salt will be generated.
-     * @param int    $iterations Number of iterations for the key derivation function.
-     * @return array            An array containing 'key' and 'salt' in hexadecimal.
+     * Always use a fresh random salt when deriving a new key. Store the returned
+     * salt alongside the encrypted data so the key can be re-derived for decryption.
+     *
+     * Note: encryptWithPassword() handles all of this automatically.
+     * Use generateKeyFromPassword() only when you need direct access to the derived key.
+     *
+     * @param string      $password   Password of any length.
+     * @param string|null $salt       Salt in hexadecimal. A random 128-bit salt is generated when null.
+     * @param int         $iterations PBKDF2 iteration count. Default: 100,000.
+     * @return array                  ['key' => string (hex, 64 chars), 'salt' => string (hex, 32 chars)]
      */
-    public function generateKeyFromPassword($password, $salt = null, $iterations = 100000)
+    public function generateKeyFromPassword(string $password, ?string $salt = null, int $iterations = 100000): array
     {
-        // Generate a random salt if not provided
-        if ($salt === null) {
-            $salt = random_bytes(16); // 128-bit salt
-        } else {
-            $salt = hex2bin($salt);
-        }
+        $binarySalt = ($salt === null) ? random_bytes(self::SALT_SIZE) : hex2bin($salt);
+        $key        = hash_pbkdf2('sha256', $password, $binarySalt, $iterations, self::KEY_SIZE, true);
 
-        // Derive the key using PBKDF2
-        $key = hash_pbkdf2('sha256', $password, $salt, $iterations, 32, true);
-
-        // Return the key and salt in hexadecimal format
         return [
             'key'  => bin2hex($key),
-            'salt' => bin2hex($salt),
+            'salt' => bin2hex($binarySalt),
         ];
     }
 
+    // =========================================================================
+    // Password hashing — bcrypt
+    // =========================================================================
+
     /**
-     * Securely hash a password for storage.
+     * Hash a password for secure storage using bcrypt (PASSWORD_DEFAULT).
      *
-     * @param string $password The password to hash.
-     * @return string          The hashed password.
+     * Never store plaintext passwords. Always hash before saving to the database.
+     *
+     * @param string $password Plaintext password.
+     * @return string          Bcrypt hash, safe to store directly in the database.
      */
-    public function hashPassword($password)
+    public function hashPassword(string $password): string
     {
         return password_hash($password, PASSWORD_DEFAULT);
     }
 
     /**
-     * Verify a password against a hash.
+     * Verify a plaintext password against a stored bcrypt hash.
      *
-     * @param string $password The plaintext password.
-     * @param string $hash     The hashed password.
-     * @return bool            True if the password matches the hash, false otherwise.
+     * @param string $password Plaintext password to verify.
+     * @param string $hash     Stored bcrypt hash.
+     * @return bool
      */
-    public function verifyPassword($password, $hash)
+    public function verifyPassword(string $password, string $hash): bool
     {
         return password_verify($password, $hash);
     }
 
     /**
-     * Generate a random initialization vector (IV).
+     * Check whether a stored password hash needs to be upgraded.
      *
-     * @param string $cipherMethod The cipher method to use (default is 'aes-256-cbc').
-     * @return string              The IV in hexadecimal format.
+     * Call this after a successful login. If it returns true, re-hash the password
+     * with hashPassword() and update the stored value. This silently upgrades hashes
+     * when PHP raises the default bcrypt cost factor in a future version.
+     *
+     * @param string $hash Stored bcrypt hash.
+     * @return bool        True when the hash should be updated.
      */
-    public function generateInitializationVector($cipherMethod = 'aes-256-cbc')
+    public function needsRehash(string $hash): bool
     {
-        $ivLength = openssl_cipher_iv_length($cipherMethod);
-        $iv = random_bytes($ivLength);
-        return bin2hex($iv);
+        return password_needs_rehash($hash, PASSWORD_DEFAULT);
+    }
+
+    // =========================================================================
+    // Secure random utilities
+    // =========================================================================
+
+    /**
+     * Generate cryptographically secure random bytes.
+     *
+     * @param int $length Number of random bytes. The returned hex string is 2× this length.
+     * @return string     Hexadecimal string.
+     */
+    public function randomBytes(int $length): string
+    {
+        return bin2hex(random_bytes($length));
     }
 
     /**
-     * Encrypt data using a password of any length.
+     * Generate a cryptographically secure random alphanumeric string.
      *
-     * @param string $plaintext  The data to encrypt.
-     * @param string $password   The password to derive the encryption key.
-     * @param int    $iterations Number of iterations for the key derivation function.
-     * @return string            The base64-encoded encrypted data containing salt, IV, and ciphertext.
-     */
-    public function encryptWithPassword($plaintext, $password, $iterations = 100000)
-    {
-        // Generate a random salt
-        $salt = random_bytes(16); // 128-bit salt
-
-        // Generate key from password and salt
-        $key = hash_pbkdf2('sha256', $password, $salt, $iterations, 32, true);
-
-        // Generate a random IV
-        $ivLength = openssl_cipher_iv_length('aes-256-cbc');
-        $iv = random_bytes($ivLength);
-
-        // Encrypt the data
-        $ciphertext = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
-
-        // Generate HMAC for authentication
-        $hmac = hash_hmac('sha256', $ciphertext, $key, true);
-
-        // Concatenate salt, iv, ciphertext, and HMAC (all in binary)
-        $encryptedData = $salt . $iv . $ciphertext . $hmac;
-
-        // Encode the result in base64 for storage/transmission
-        $encodedData = base64_encode($encryptedData);
-
-        return $encodedData;
-    }
-
-    /**
-     * Decrypt data using a password of any length.
+     * Uses only URL-safe characters (A-Z, a-z, 0-9). Suitable for tokens,
+     * invite codes, temporary passwords, API keys, and URL slugs.
      *
-     * @param string $encodedData The base64-encoded encrypted data containing salt, IV, and ciphertext.
-     * @param string $password    The password to derive the decryption key.
-     * @param int    $iterations  Number of iterations for the key derivation function.
-     * @return string|false       The decrypted plaintext or false on failure.
+     * @param int $length Number of characters.
+     * @return string
      */
-    public function decryptWithPassword($encodedData, $password, $iterations = 100000)
+    public function randomString(int $length): string
     {
-        $encryptedData = base64_decode($encodedData);
+        $chars  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        $max    = strlen($chars) - 1;
+        $result = '';
 
-        // Extract the salt, IV, ciphertext, and HMAC
-        $saltLength = 16; // 16 bytes
-        $ivLength = openssl_cipher_iv_length('aes-256-cbc');
-        $hmacLength = 32; // SHA-256 HMAC is 32 bytes
-
-        $salt = substr($encryptedData, 0, $saltLength);
-        $iv = substr($encryptedData, $saltLength, $ivLength);
-        $ciphertext = substr($encryptedData, $saltLength + $ivLength, -$hmacLength);
-        $hmac = substr($encryptedData, -$hmacLength);
-
-        // Generate key from password and salt
-        $key = hash_pbkdf2('sha256', $password, $salt, $iterations, 32, true);
-
-        // Verify HMAC
-        $calculatedHmac = hash_hmac('sha256', $ciphertext, $key, true);
-        if (!hash_equals($hmac, $calculatedHmac)) {
-            return false; // HMAC verification failed
+        for ($i = 0; $i < $length; $i++) {
+            $result .= $chars[random_int(0, $max)];
         }
 
-        // Decrypt the data
-        $plaintext = openssl_decrypt($ciphertext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        return $result;
+    }
 
-        return $plaintext;
+    /**
+     * Generate a cryptographically secure random integer within a given range.
+     *
+     * @param int $min Minimum value (inclusive).
+     * @param int $max Maximum value (inclusive).
+     * @return int
+     */
+    public function randomInt(int $min, int $max): int
+    {
+        return random_int($min, $max);
+    }
+
+    // =========================================================================
+    // Private — AES-256-GCM core
+    // =========================================================================
+
+    /**
+     * Encrypt using AES-256-GCM. Returns raw binary: nonce[12] + tag[16] + ciphertext[n].
+     *
+     * @param string $plaintext  Data to encrypt.
+     * @param string $binaryKey  Raw 32-byte binary key.
+     * @return string            Raw binary output.
+     *
+     * @throws \RuntimeException If OpenSSL encryption fails.
+     */
+    private function encryptRaw(string $plaintext, string $binaryKey): string
+    {
+        $nonce = random_bytes(self::NONCE_SIZE);
+        $tag   = '';
+
+        $ciphertext = openssl_encrypt(
+            $plaintext,
+            self::CIPHER,
+            $binaryKey,
+            OPENSSL_RAW_DATA,
+            $nonce,
+            $tag,
+            '',
+            self::TAG_SIZE
+        );
+
+        if ($ciphertext === false) {
+            throw new \RuntimeException('Encryption failed: ' . openssl_error_string());
+        }
+
+        return $nonce . $tag . $ciphertext;
+    }
+
+    /**
+     * Decrypt AES-256-GCM binary input: nonce[12] + tag[16] + ciphertext[n].
+     * Authentication is verified by OpenSSL — returns false on tag mismatch.
+     *
+     * @param string $data       Raw binary input.
+     * @param string $binaryKey  Raw 32-byte binary key.
+     * @return string|false      Decrypted plaintext, or false on failure.
+     */
+    private function decryptRaw(string $data, string $binaryKey)
+    {
+        // Minimum: nonce[12] + tag[16] = 28 bytes (zero-length plaintext is valid)
+        if (strlen($data) < self::NONCE_SIZE + self::TAG_SIZE) {
+            return false;
+        }
+
+        $nonce      = substr($data, 0, self::NONCE_SIZE);
+        $tag        = substr($data, self::NONCE_SIZE, self::TAG_SIZE);
+        $ciphertext = substr($data, self::NONCE_SIZE + self::TAG_SIZE);
+
+        return openssl_decrypt(
+            $ciphertext,
+            self::CIPHER,
+            $binaryKey,
+            OPENSSL_RAW_DATA,
+            $nonce,
+            $tag
+        );
+    }
+
+    /**
+     * Parse and validate a hex key string, returning the raw binary.
+     *
+     * @param string $hexKey  64-character hexadecimal string.
+     * @return string         Raw 32-byte binary key.
+     *
+     * @throws \InvalidArgumentException If the key is invalid.
+     */
+    private function parseKey(string $hexKey): string
+    {
+        if (!ctype_xdigit($hexKey) || strlen($hexKey) !== self::KEY_SIZE * 2) {
+            throw new \InvalidArgumentException(
+                'Encryption key must be a 64-character hexadecimal string (32 bytes). '
+                . 'Use $app->encryption->generateKey() to produce a valid key.'
+            );
+        }
+
+        return hex2bin($hexKey);
     }
 }
-
-

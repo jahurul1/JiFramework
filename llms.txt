@@ -1,0 +1,1249 @@
+# JiFramework — AI Reference (llms.txt)
+# Full method reference for AI assistants and LLM-powered tools.
+# Always use framework methods instead of writing plain PHP equivalents.
+# Documentation: https://jiframework.com
+# GitHub: https://github.com/jahurul1/JiFramework
+
+---
+
+## BOOTSTRAP
+
+```php
+require __DIR__ . '/vendor/autoload.php';
+use JiFramework\Core\App\App;
+$app = new App();
+```
+
+App::__construct() automatically:
+- Detects project root and loads jiconfig.php
+- Registers global error handler and logger
+- Enforces rate limiting and IP/country access control
+- Auto-loads all model files from models/*.php
+- Registers lazy factory closures for all other components
+
+App::getInstance(): App  — returns the singleton $app from anywhere in the codebase
+
+---
+
+## RECOMMENDED STYLE — Assign components to variables first
+
+Always assign $app components to local variables at the top of each file.
+This is cleaner, less repetitive, and easier to read.
+
+```php
+<?php
+require __DIR__ . '/vendor/autoload.php';
+
+use JiFramework\Core\App\App;
+use JiFramework\Core\Utilities\DateTimeHelper;
+
+$app = new App();
+
+// Assign components to local variables
+$db      = $app->db;
+$auth    = $app->auth;
+$session = $app->sessionManager;
+$val     = $app->validator;
+$log     = $app->logger;
+$cache   = $app->cache;
+$enc     = $app->encryption;
+$str     = $app->str;
+$fm      = $app->fileManager;
+$http    = $app->http;
+$url     = $app->url;
+$req     = $app->request;
+$pager   = $app->paginator;
+$timer   = $app->executionTimer;
+$lang    = $app->language;      // null if multi_lang => false
+$router  = $app->router;        // null if router_enabled => false
+
+// Then use cleanly — no $app-> everywhere
+$users = $db->table('users')->where('active', '=', 1)->get();
+$val->make($_POST, ['email' => 'required|email']);
+$log->info('Page loaded');
+```
+
+Standard variable names to use consistently:
+  $db      — QueryBuilder
+  $auth    — Auth
+  $session — SessionManager
+  $val     — Validator
+  $log     — Logger
+  $cache   — CacheManager
+  $enc     — Encryption
+  $str     — Str
+  $fm      — FileManager
+  $http    — HttpClient
+  $url     — Url
+  $req     — Request
+  $pager   — Paginator
+  $timer   — ExecutionTimer
+  $lang    — LanguageManager
+  $router  — Router
+
+---
+
+## APP METHODS
+
+$app->redirect(string $url): void
+  — Sends Location header and exits. Use for all redirects.
+  $app->redirect('/dashboard');
+
+$app->exit(int $statusCode = 200, string $msg = ''): void
+  — Sets HTTP status code, outputs $msg, and exits.
+  $app->exit(404, 'Not found');
+
+$app->json(int $statusCode, array $data): void
+  — Sets Content-Type: application/json, encodes $data, and exits.
+  — PREFERRED for all API/AJAX responses. Never call header()+json_encode()+exit manually.
+  $app->json(200, ['status' => 'ok', 'data' => $result]);
+  $app->json(422, ['errors' => $val->errors()]);
+  $app->json(404, ['error' => 'Not found']);
+
+$app->abort(int $statusCode, string $message = ''): void
+  — Throws HttpException. ErrorHandler renders HTML or JSON response automatically.
+  $app->abort(404, 'Post not found');
+  $app->abort(403);
+
+---
+
+## CONFIG (JiFramework\Config\Config — all static properties)
+
+Config::$appMode                   — 'development' | 'production'
+Config::$timezone                  — e.g. 'UTC', 'Asia/Dhaka'
+Config::$basePath                  — project root path (auto-detected)
+Config::$storagePath               — storage/ directory path
+Config::$logFilePath               — storage/Logs/
+Config::$logEnabled                — bool
+Config::$logLevel                  — 'DEBUG'|'INFO'|'NOTICE'|'WARNING'|'ERROR'|'CRITICAL'
+Config::$cachePath                 — storage/Cache/FileCache/
+Config::$cacheDriver               — 'file' | 'sqlite'
+Config::$rateLimitEnabled          — bool
+Config::$rateLimitRequests         — int
+Config::$rateLimitTimeWindow       — int (seconds)
+Config::$rateLimitBanEnabled       — bool
+Config::$rateLimitBanDuration      — int (seconds)
+Config::$ipBlockingEnabled         — bool
+Config::$countryBlockingEnabled    — bool
+Config::$routerEnabled             — bool
+Config::$multiLang                 — bool
+Config::$primaryDatabase           — array (host, database, username, password, driver, charset)
+Config::$databases                 — array of named connections
+Config::$errorTemplate             — path to custom error page (optional)
+
+Config::get(string $key, mixed $default = null): mixed
+  — Dot-notation access: Config::get('primaryDatabase.host')
+  — Config::get('appMode', 'production')
+
+---
+
+## QUERYBUILDER ($db = $app->db)
+
+IMPORTANT: Always use $db->table('...') — never write raw SQL or use PDO directly.
+Every query is parameterised automatically (SQL injection safe).
+Query state resets after every terminal call — $db can be reused freely.
+
+### Building queries (chainable)
+
+table(string $table): static           — REQUIRED first call
+select(array $columns): static         — specify columns to return
+selectRaw(string $expression): static  — raw SELECT expression
+where(string $col, string $op, mixed $val): static
+orWhere(string $col, string $op, mixed $val): static
+whereIn(string $col, array $values): static
+whereNotIn(string $col, array $values): static
+whereNull(string $col): static
+whereNotNull(string $col): static
+whereBetween(string $col, mixed $min, mixed $max): static
+whereLike(string $col, string $pattern): static
+join(string $table, string $first, string $op, string $second): static
+leftJoin(string $table, string $first, string $op, string $second): static
+orderBy(string $col, string $dir = 'ASC'): static
+groupBy(string $col): static
+having(string $col, string $op, mixed $val): static
+limit(int $n): static
+offset(int $n): static
+when(bool $condition, callable $callback): static
+  — Conditionally apply query parts without breaking the chain.
+
+### Terminal methods (execute the query)
+
+get(): array                           — all matching rows
+first(): ?array                        — first matching row or null
+find(int $id, string $pk = 'id'): ?array  — find by primary key
+count(): int
+sum(string $col): float
+avg(string $col): float
+min(string $col): mixed
+max(string $col): mixed
+exists(): bool
+insert(array $data): bool
+insertGetId(array $data): int|false
+insertIgnore(array $data): bool        — insert, skip on duplicate key
+upsert(array $data, array $updateColumns): bool  — insert or update on duplicate
+update(array $data): int               — returns affected rows
+increment(string $col, int $amount = 1): int
+decrement(string $col, int $amount = 1): int
+delete(): int                          — returns affected rows
+paginate(int $perPage = 15, int $page = null): object
+  — returns: data, totalItems, totalPages, currentPage, perPage, offset, hasNextPage, hasPrevPage
+chunk(int $size, callable $callback): void
+  — process large datasets in batches without loading all rows into memory
+
+### Transactions
+
+transaction(callable $callback): mixed
+beginTransaction(): void
+commit(): void
+rollback(): void
+
+### Raw queries (use sparingly)
+
+query(string $sql, array $bindings = []): array
+bind(string $sql, array $bindings = []): bool
+
+### Examples
+
+```php
+$db = $app->db;
+
+// Fetch with conditions
+$users = $db->table('users')
+    ->where('active', '=', 1)
+    ->where('age', '>', 18)
+    ->orderBy('name', 'ASC')
+    ->limit(10)
+    ->get();
+
+// Single row
+$user = $db->table('users')->where('email', '=', $email)->first();
+
+// Insert and get ID
+$id = $db->table('users')->insertGetId([
+    'name'       => 'Alice',
+    'email'      => 'alice@example.com',
+    'created_at' => DateTimeHelper::now(),
+]);
+
+// Update
+$db->table('users')->where('id', '=', $id)->update(['active' => 0]);
+
+// Delete
+$db->table('sessions')->where('expired_at', '<', DateTimeHelper::now())->delete();
+
+// Exists check
+$exists = $db->table('users')->where('email', '=', $email)->exists();
+
+// Aggregates
+$total   = $db->table('orders')->where('status', '=', 'paid')->sum('amount');
+$count   = $db->table('users')->count();
+
+// Paginate
+$result = $db->table('posts')->orderBy('id', 'DESC')->paginate(15);
+// $result->data, $result->totalItems, $result->totalPages
+
+// Conditional query
+$users = $db->table('users')
+    ->when($search, function($q) use ($search) {
+        $q->whereLike('name', '%' . $search . '%');
+    })
+    ->when($active, function($q) {
+        $q->where('active', '=', 1);
+    })
+    ->get();
+
+// Transaction
+$orderId = $db->transaction(function() use ($db, $cart, $userId) {
+    $id = $db->table('orders')->insertGetId([
+        'user_id' => $userId,
+        'total'   => $cart['total'],
+    ]);
+    foreach ($cart['items'] as $item) {
+        $db->table('order_items')->insert(['order_id' => $id, 'product_id' => $item['id']]);
+        $db->table('products')->where('id', '=', $item['id'])->decrement('stock');
+    }
+    return $id;
+});
+
+// Named connection
+$analytics = $app->db('analytics');
+$events = $analytics->table('events')->where('date', '=', '2025-01-01')->get();
+
+// Large dataset
+$db->table('users')->chunk(100, function($batch) {
+    foreach ($batch as $user) { /* process */ }
+});
+```
+
+---
+
+## MODEL (extend JiFramework\Core\Database\Model)
+
+```php
+use JiFramework\Core\Database\Model;
+
+class Post extends Model
+{
+    protected static string $table      = 'posts';       // REQUIRED
+    protected static string $primaryKey = 'id';          // default: 'id'
+    protected static string $connection = 'primary';     // default: 'primary'
+}
+```
+
+Post::all(): array
+Post::find(int $id): ?array            — null if not found
+Post::where(string $col, string $op, mixed $val): QueryBuilder
+Post::first(): ?array
+Post::count(): int
+Post::exists(int $id): bool
+Post::insert(array $data): bool
+Post::create(array $data): int         — insert and return last insert ID
+Post::update(array $data, int $id): int  — data first, id second
+Post::destroy(int $id): int
+
+```php
+// Basic operations
+$posts    = Post::all();
+$post     = Post::find($id);
+$count    = Post::count();
+$exists   = Post::exists($id);
+
+// Chaining via where() — full QueryBuilder API available
+$published = Post::where('published', '=', 1)
+    ->orderBy('created_at', 'DESC')
+    ->limit(10)
+    ->get();
+
+// Write operations
+$id = Post::create(['title' => 'Hello', 'body' => '...', 'published' => 1]);
+Post::update(['title' => 'Updated'], $id);
+Post::destroy($id);
+```
+
+---
+
+## AUTH ($auth = $app->auth)
+
+Configuration required in jiconfig.php:
+  'auth_user_table'  => 'users',
+  'auth_admin_table' => 'admin',
+  'auth_token_table' => 'tokens',
+
+### User auth
+loginUser(string $email, string $password, bool $remember = false): bool
+logoutUser(): void
+isLoggedIn(): bool
+getUser(): ?array
+getUserId(): ?int
+loginUserById(int $id, bool $remember = false): bool
+
+### Admin auth
+loginAdmin(string $email, string $password, bool $remember = false): bool
+logoutAdmin(): void
+isAdminLoggedIn(): bool
+getAdmin(): ?array
+getAdminId(): ?int
+loginAdminById(int $id, bool $remember = false): bool
+
+```php
+$auth = $app->auth;
+
+// Login
+if ($auth->loginUser($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
+    $app->redirect('/dashboard');
+} else {
+    $error = 'Invalid credentials';
+}
+
+// Guard a page
+if (!$auth->isLoggedIn()) {
+    $app->redirect('/login');
+}
+
+// Get current user
+$user   = $auth->getUser();
+$userId = $auth->getUserId();
+
+// Logout
+$auth->logoutUser();
+$app->redirect('/login');
+```
+
+---
+
+## SESSION MANAGER ($session = $app->sessionManager)
+
+set(string $key, mixed $value): void
+get(string $key, mixed $default = null): mixed
+has(string $key): bool
+delete(string $key): void
+clear(): void
+all(): array
+id(): string
+isStarted(): bool
+
+### Flash messages
+setFlashMessage(string $type, string $message, array $data = []): void
+getFlashMessages(): array
+flashSuccess(string $message): void
+flashError(string $message): void
+flashWarning(string $message): void
+flashInfo(string $message): void
+
+### CSRF
+generateCsrfToken(): string
+verifyCsrfToken(string $token): bool
+csrfMiddleware(): void  — auto-verify on POST, abort(419) on fail
+
+```php
+$session = $app->sessionManager;
+
+// Store and retrieve
+$session->set('user_id', 42);
+$userId = $session->get('user_id');
+$session->has('cart');
+$session->delete('temp_key');
+
+// Flash and redirect
+$session->flashSuccess('Profile updated.');
+$app->redirect('/profile');
+
+// Read flash on next page
+$messages = $session->getFlashMessages();
+
+// CSRF in a form
+$token = $session->generateCsrfToken();
+// <input type="hidden" name="_csrf_token" value="<?= $token ?>">
+
+// CSRF guard on POST handler
+$session->csrfMiddleware();
+```
+
+---
+
+## VALIDATOR ($val = $app->validator)
+
+### Fluent API
+make(array $data, array $rules, array $messages = []): Validator
+passes(): bool
+fails(): bool
+errors(): array                        — ['field' => ['error1', 'error2']]
+first(string $field = null): string|array
+throw(): void                          — throws ValidationException if fails
+stopOnFirstFailure(bool $stop = true): Validator
+addRule(string $name, callable $fn, string $message): Validator
+addMessages(array $messages): Validator
+
+### Quick single-value check
+check(mixed $value, string $rules): bool
+checkOrFail(mixed $value, string $rules): void
+
+### All built-in rules
+required          — non-empty value
+nullable          — skip all other rules if empty
+email             — valid email format
+min:N             — string: min N chars | numeric: min N value
+max:N             — string: max N chars | numeric: max N value
+integer           — must be integer
+numeric           — must be numeric
+alpha             — letters only
+alphaNum          — letters and numbers only
+url               — valid URL
+in:a,b,c          — value must be in list
+notIn:a,b,c       — value must not be in list
+boolean           — accepts: true, false, 1, 0, 'yes', 'no', 'on', 'off'
+date              — valid date string
+confirmed:field   — must match another field (e.g. confirmed:password)
+same:field        — must equal another field
+different:field   — must differ from another field
+regex:/pattern/   — must match regex
+
+### Dot notation for nested arrays
+```php
+$val = $app->validator;
+
+// Validate form input
+$v = $val->make($_POST, [
+    'name'             => 'required|min:2|max:100',
+    'email'            => 'required|email',
+    'password'         => 'required|min:8',
+    'password_confirm' => 'required|confirmed:password',
+    'age'              => 'nullable|integer|min:18',
+]);
+
+if ($v->fails()) {
+    $app->json(422, ['errors' => $v->errors()]);
+}
+
+// Or throw on failure
+$val->make($_POST, $rules)->throw();
+
+// Quick single-value check
+$val->check('hello@x.com', 'required|email');   // true
+$val->checkOrFail($email, 'required|email');     // throws on fail
+
+// Dot notation
+$v = $val->make($_POST, [
+    'user.name'  => 'required|min:2',
+    'user.email' => 'required|email',
+]);
+```
+
+---
+
+## ROUTER ($router = $app->router — requires router_enabled => true)
+
+get(string $path, string|callable $handler): void
+post(string $path, string|callable $handler): void
+put(string $path, string|callable $handler): void
+delete(string $path, string|callable $handler): void
+patch(string $path, string|callable $handler): void
+any(string $path, string|callable $handler): void
+match(array $methods, string $path, string|callable $handler): void
+redirect(string $from, string $to, int $code = 302): void
+group(array $options, callable $callback): void  — options: prefix
+dispatch(): void  — MUST be called at end of index.php
+
+URL params: {name} syntax — available as $name in file handlers
+_method override: POST with hidden _method=PUT|DELETE triggers correct route
+
+```php
+$router = $app->router;
+
+$router->get('/', 'pages/home.php');
+$router->get('/users/{id}', 'pages/user.php');   // $id available inside file
+
+$router->post('/login', function () use ($app) {
+    $session = $app->sessionManager;
+    $auth    = $app->auth;
+    if ($auth->loginUser($_POST['email'], $_POST['password'])) {
+        $session->flashSuccess('Welcome back!');
+        $app->redirect('/dashboard');
+    }
+    $app->json(401, ['error' => 'Invalid credentials']);
+});
+
+$router->group(['prefix' => '/admin'], function ($r) {
+    $r->get('/dashboard', 'pages/admin/dashboard.php');
+    $r->get('/users',     'pages/admin/users.php');
+    $r->group(['prefix' => '/reports'], function ($r) {
+        $r->get('/monthly', 'pages/admin/reports/monthly.php');
+    });
+});
+
+$router->redirect('/old-path', '/new-path', 301);
+$router->dispatch();
+```
+
+---
+
+## CACHE ($cache = $app->cache)
+
+Driver: set via jiconfig.php — 'cache_driver' => 'file' | 'sqlite'
+
+set(string $key, mixed $value, int $ttl = 3600): bool
+get(string $key, mixed $default = null): mixed
+has(string $key): bool
+delete(string $key): bool
+clear(): bool
+increment(string $key, int $amount = 1): int
+decrement(string $key, int $amount = 1): int
+
+```php
+$cache = $app->cache;
+
+// Store for 10 minutes
+$cache->set('featured_posts', $posts, 600);
+
+// Get with default
+$posts = $cache->get('featured_posts', []);
+
+// Cache-aside pattern
+if (!$cache->has('stats')) {
+    $stats = $db->table('orders')->where('status', '=', 'paid')->sum('amount');
+    $cache->set('stats', $stats, 300);
+}
+$stats = $cache->get('stats');
+
+// Counters
+$cache->increment('page_views');
+$cache->decrement('tickets_remaining');
+
+// Invalidate
+$cache->delete('featured_posts');
+$cache->clear();  // wipe everything
+```
+
+---
+
+## LOGGER ($log = $app->logger)
+
+Levels (lowest to highest): DEBUG, INFO, NOTICE, WARNING, ERROR, CRITICAL, ALERT, EMERGENCY
+Only entries at or above Config::$logLevel are written.
+Supports {placeholder} interpolation from context array.
+
+debug(string $message, array $context = []): void
+info(string $message, array $context = []): void
+notice(string $message, array $context = []): void
+warning(string $message, array $context = []): void
+error(string $message, array $context = []): void
+critical(string $message, array $context = []): void
+alert(string $message, array $context = []): void
+emergency(string $message, array $context = []): void
+setLogFile(string $path): void
+
+```php
+$log = $app->logger;
+
+$log->info('User {name} logged in', ['name' => $user['name']]);
+$log->warning('Slow query: {ms}ms', ['ms' => $elapsed]);
+$log->error('Payment failed', ['order_id' => $id, 'reason' => $msg]);
+$log->debug('Cache miss', ['key' => 'user:42']);
+$log->critical('Database unreachable', ['host' => $host]);
+```
+
+---
+
+## ENCRYPTION ($enc = $app->encryption)
+
+generateKey(): string                  — 64-char hex AES-256 key
+encrypt(string $data, string $key): string   — AES-256-GCM, returns base64
+decrypt(string $data, string $key): string|false
+encryptWithPassword(string $data, string $password): string
+decryptWithPassword(string $data, string $password): string|false
+hashPassword(string $password): string   — bcrypt hash
+verifyPassword(string $password, string $hash): bool
+randomBytes(int $length = 32): string  — hex-encoded (length bytes = length*2 hex chars)
+randomString(int $length = 32): string — alphanumeric random string
+
+```php
+$enc = $app->encryption;
+
+// Key-based encryption
+$key    = $enc->generateKey();
+$cipher = $enc->encrypt('sensitive data', $key);
+$plain  = $enc->decrypt($cipher, $key);  // false on failure
+
+// Password hashing — always use this, never password_hash() directly
+$hash = $enc->hashPassword($_POST['password']);
+$ok   = $enc->verifyPassword($_POST['password'], $hash);
+
+// Secure tokens
+$token  = $enc->randomBytes(32);   // 64-char hex string
+$code   = $enc->randomString(16);  // 16-char alphanumeric
+```
+
+---
+
+## RATE LIMITER ($limiter = $app->rateLimiter)
+
+Auto-enforced at every request boot. Manual methods for admin tooling only.
+
+enforceRateLimit(): void
+getRemainingRequests(string $ip = null): int
+isBannedIp(string $ip): bool
+banIp(string $ip, int $duration = null): void
+unbanIp(string $ip): void
+getBanInfo(string $ip): ?array         — ['ip', 'ban_expires', 'seconds_remaining'] or null
+resetIp(string $ip): bool
+
+```php
+$limiter = $app->rateLimiter;
+
+$remaining = $limiter->getRemainingRequests($ip);
+$limiter->banIp('1.2.3.4', 3600);
+$limiter->unbanIp('1.2.3.4');
+$info = $limiter->getBanInfo('1.2.3.4');
+```
+
+---
+
+## ACCESS CONTROL ($ac = $app->accessControl)
+
+Auto-enforced at boot. Manual methods for admin tooling.
+
+isIpBlocked(string $ip): bool
+blockIp(string $ip): bool
+unblockIp(string $ip): bool
+getBlockedIps(): array
+isCountryBlocked(string $countryCode): string  — 'blocked'|'allowed'|'unknown'
+blockCountry(string $countryCode): bool
+unblockCountry(string $countryCode): bool
+getBlockedCountries(): array
+
+---
+
+## HTTP CLIENT ($http = $app->http)
+
+get(string $url, array $options = []): array
+post(string $url, array $data = [], array $options = []): array
+put(string $url, array $data = [], array $options = []): array
+patch(string $url, array $data = [], array $options = []): array
+delete(string $url, array $options = []): array
+
+Response always returns:
+  ['status_code' => int, 'body' => string, 'headers' => array, 'error' => string|null]
+
+Options:
+  headers          => ['Authorization: Bearer token']
+  json             => true  (send as JSON, sets Content-Type automatically)
+  timeout          => 30
+  connect_timeout  => 10
+  follow_redirects => true
+  ssl_verify       => true
+
+```php
+$http = $app->http;
+
+// GET
+$res = $http->get('https://api.example.com/users');
+if ($res['status_code'] === 200) {
+    $data = json_decode($res['body'], true);
+}
+
+// POST JSON with auth header
+$res = $http->post('https://api.example.com/users', [
+    'name'  => 'Alice',
+    'email' => 'alice@example.com',
+], [
+    'json'    => true,
+    'headers' => ['Authorization: Bearer ' . $token],
+]);
+
+// Error handling
+if ($res['error']) {
+    $log->error('API call failed', ['error' => $res['error']]);
+}
+```
+
+---
+
+## FILE MANAGER ($fm = $app->fileManager)
+
+writeFile(string $path, string $content, bool $append = false): bool
+readFile(string $path): string         — throws FileException if not found
+copyFile(string $src, string $dest): bool
+moveFile(string $src, string $dest): bool
+deleteFile(string $path): bool         — returns true even if file doesn't exist
+ensureDirectoryExists(string $path): bool
+listFiles(string $dir, string $ext = '', bool $recursive = false): array
+getFileInfo(string $path): array       — ['name','path','size','extension','mime','modified']
+getMimeType(string $path): string
+humanFileSize(int $bytes, int $decimals = 2): string  — e.g. '2.50 MB'
+generateSafeFilename(string $filename): string
+cleanDirectory(string $dir, bool $recursive = false): bool
+handleUpload(array $file, string $destination, array $options = []): array
+  — $file = $_FILES['field'] entry
+  — options: allowed_types, max_size, rename, prefix
+  — returns: ['success' => bool, 'path' => string, 'filename' => string, 'error' => string]
+handleImageUpload(array $file, string $destination, array $options = []): array
+  — Same as handleUpload + image validation and optional resizing
+  — options: max_width, max_height, resize
+
+```php
+$fm = $app->fileManager;
+
+// Upload
+$result = $fm->handleUpload($_FILES['document'], 'storage/Uploads/', [
+    'allowed_types' => ['application/pdf', 'image/jpeg'],
+    'max_size'      => 5242880,
+    'rename'        => true,
+]);
+if ($result['success']) {
+    $path = $result['path'];
+} else {
+    $error = $result['error'];
+}
+
+// File operations
+$fm->writeFile('storage/exports/report.csv', $csv);
+$content = $fm->readFile('storage/exports/report.csv');
+$fm->deleteFile('storage/exports/old.csv');
+$size = $fm->humanFileSize(filesize($path));  // '1.25 MB'
+
+// Safe filename
+$safe = $fm->generateSafeFilename($_FILES['file']['name']);
+```
+
+---
+
+## STR ($str = $app->str)
+
+All methods are Unicode/multi-byte safe (mb_* internally).
+
+escape(mixed $input): mixed            — htmlspecialchars on strings, recursive on arrays
+length(string $s): int
+wordCount(string $s): int
+countOccurrences(string $s, string $needle): int
+words(string $s, int $count): string
+plainText(string $html): string        — strip tags + decode HTML entities
+before(string $s, string $needle): string
+after(string $s, string $needle): string
+between(string $s, string $start, string $end): string
+extractInteger(string $s): string
+truncate(string $s, int $limit, string $end = '...'): string
+mask(string $s, int $unmasked = 4, string $char = '*'): string
+zeroPad(int $n, int $length): string
+reverse(string $s): string
+replaceFirst(string $s, string $search, string $replace): string
+replaceLast(string $s, string $search, string $replace): string
+toCamelCase(string $s): string
+toPascalCase(string $s): string
+toSnakeCase(string $s): string
+toKebabCase(string $s): string
+toTitleCase(string $s): string
+contains(string $s, string $needle): bool
+startsWith(string $s, string $needle): bool
+endsWith(string $s, string $needle): bool
+isJson(string $s): bool
+slugify(string $s, string $sep = '-'): string
+formatCurrency(float $amount, string $symbol = '$', int $decimals = 2): string
+randomInt(int $min, int $max): int
+randomString(int $length = 16, string $chars = null): string
+randomToken(int $length = 32): string  — hex token
+randomColor(): string                  — '#rrggbb'
+
+```php
+$str = $app->str;
+
+$safe  = $str->escape($_POST['comment']);
+$slug  = $str->slugify('Hello World!');         // 'hello-world'
+$mask  = $str->mask('4111111111111234', 4);     // '************1234'
+$snake = $str->toSnakeCase('getUserName');      // 'get_user_name'
+$short = $str->truncate($bio, 150);
+$token = $str->randomToken(32);                 // 64-char hex
+$price = $str->formatCurrency(19.99);           // '$19.99'
+$plain = $str->plainText('<p>Hello <b>World</b></p>'); // 'Hello World'
+```
+
+---
+
+## PAGINATOR ($pager = $app->paginator)
+
+paginate(int $perPage, int $total, array $options = []): object
+  — Auto-reads page from $_GET['page'] if not provided
+  — Returns: data (null — fill manually), totalItems, totalPages, currentPage,
+    perPage, offset, hasNextPage, hasPrevPage
+
+renderLinks(object $paginationData, string $baseUrl, int $maxLinks = 5): string
+  — Renders Bootstrap-compatible pagination HTML
+
+```php
+$pager = $app->paginator;
+
+// With QueryBuilder — recommended
+$result = $db->table('posts')
+    ->where('published', '=', 1)
+    ->orderBy('id', 'DESC')
+    ->paginate(15);
+
+foreach ($result->data as $post) { /* render */ }
+echo $pager->renderLinks($result, '/posts');
+
+// With non-DB data
+$all    = getItemsFromSomewhere();
+$pag    = $pager->paginate(20, count($all));
+$page   = array_slice($all, $pag->offset, $pag->perPage);
+echo $pager->renderLinks($pag, '/items');
+```
+
+---
+
+## DATETIME HELPER (DateTimeHelper — all static)
+
+Use: DateTimeHelper::method() after importing the class.
+Or access via: $app->dateTime::method()
+
+```php
+use JiFramework\Core\Utilities\DateTimeHelper;
+```
+
+### Current time
+now(string $format = 'Y-m-d H:i:s', string $tz = null): string
+today(string $tz = null): string
+tomorrow(string $tz = null): string
+yesterday(string $tz = null): string
+
+### Formatting
+format(string $targetFormat, string $datetime, string $sourceFormat = 'Y-m-d H:i:s'): string
+formatForDisplay(string $datetime): string   — 'January 1, 2025 12:00 PM'
+forDatabase(string $datetime): string        — converts to 'Y-m-d H:i:s'
+fromDatabase(string $datetime, string $format = 'Y-m-d H:i:s'): string
+
+### Timezone
+convertTimezone(string $datetime, string $from, string $to): string
+toUtc(string $datetime, string $fromTz): string
+fromUtc(string $datetime, string $toTz): string
+
+### Arithmetic
+addDays(string $datetime, int $days, string $format = 'Y-m-d H:i:s'): string
+subtractDays(string $datetime, int $days, string $format = 'Y-m-d H:i:s'): string
+addMonths(string $datetime, int $months, string $format = 'Y-m-d H:i:s'): string
+subtractMonths(string $datetime, int $months, string $format = 'Y-m-d H:i:s'): string
+addYears(string $datetime, int $years, string $format = 'Y-m-d H:i:s'): string
+subtractYears(string $datetime, int $years, string $format = 'Y-m-d H:i:s'): string
+addHours(string $datetime, int $hours, string $format = 'Y-m-d H:i:s'): string
+subtractHours(string $datetime, int $hours, string $format = 'Y-m-d H:i:s'): string
+addMinutes(string $datetime, int $minutes, string $format = 'Y-m-d H:i:s'): string
+subtractMinutes(string $datetime, int $minutes, string $format = 'Y-m-d H:i:s'): string
+
+### Period boundaries
+startOfDay(string $datetime): string
+endOfDay(string $datetime): string
+startOfWeek(string $datetime): string
+endOfWeek(string $datetime): string
+startOfMonth(string $datetime): string
+endOfMonth(string $datetime): string
+startOfYear(string $datetime): string
+endOfYear(string $datetime): string
+
+### Comparison
+isPast(string $datetime): bool
+isFuture(string $datetime): bool
+isBefore(string $datetime, string $compare): bool
+isAfter(string $datetime, string $compare): bool
+isSameDay(string $d1, string $d2): bool
+isBetween(string $datetime, string $start, string $end): bool
+isToday(string $datetime): bool
+isYesterday(string $datetime): bool
+isTomorrow(string $datetime): bool
+isWeekend(string $datetime): bool
+isWeekday(string $datetime): bool
+
+### Differences
+diffInDays(string $d1, string $d2, bool $absolute = true, string $format = 'Y-m-d H:i:s'): int
+diffInHours(string $d1, string $d2, bool $absolute = true): int
+diffInMinutes(string $d1, string $d2, bool $absolute = true): int
+diffInSeconds(string $d1, string $d2, bool $absolute = true): int
+getTimeElapsedString(string $datetime): string  — '3 hours ago', 'just now'
+
+### Validation & info
+isValidDate(string $datetime, string $format = 'Y-m-d H:i:s'): bool
+age(string $dob): int
+getWeekday(string $datetime): string   — 'Monday', 'Tuesday', ...
+toTimestamp(string $datetime): int
+fromTimestamp(int $ts, string $tz = null, string $format = 'Y-m-d H:i:s'): string
+
+```php
+$now     = DateTimeHelper::now();
+$today   = DateTimeHelper::today();
+$in7     = DateTimeHelper::addDays(DateTimeHelper::now(), 7);
+$age     = DateTimeHelper::age($user['date_of_birth']);
+$elapsed = DateTimeHelper::getTimeElapsedString($post['created_at']); // '5 minutes ago'
+$display = DateTimeHelper::formatForDisplay($order['created_at']);
+$start   = DateTimeHelper::startOfMonth(DateTimeHelper::now());
+$end     = DateTimeHelper::endOfMonth(DateTimeHelper::now());
+```
+
+---
+
+## EXECUTION TIMER ($timer = $app->executionTimer)
+
+start(): void
+stop(): void
+reset(): void
+restart(): void
+isRunning(): bool
+getElapsedTime(): float                — seconds
+getElapsedTimeInMilliseconds(): float
+getElapsedTimeInMicroseconds(): float
+static measure(callable $fn, mixed ...$args): float  — returns seconds taken
+
+```php
+$timer = $app->executionTimer;
+
+$timer->start();
+// ... code to measure ...
+$timer->stop();
+$ms = $timer->getElapsedTimeInMilliseconds();
+$log->debug('Query took {ms}ms', ['ms' => $ms]);
+
+// Inline measurement
+use JiFramework\Core\Utilities\ExecutionTimer;
+$seconds = ExecutionTimer::measure(function() use ($db) {
+    return $db->table('big_table')->get();
+});
+```
+
+---
+
+## REQUEST ($req = $app->request)
+
+getClientIp(): string                  — authoritative client IP (proxy-aware)
+getRequestMethod(): string             — 'GET', 'POST', 'PUT', 'DELETE', etc.
+getServerInfo(): array                 — server_software, server_protocol, document_root, remote_addr
+getPhpVersion(): string
+getRequestHeaders(): array
+getBearerToken(): ?string              — from Authorization: Bearer header
+getBody(): string                      — raw request body (use for JSON API endpoints)
+getEnv(string $key, mixed $default = null): mixed
+isHttps(): bool
+isAjax(): bool
+isCli(): bool
+
+```php
+$req = $app->request;
+
+$ip     = $req->getClientIp();
+$method = $req->getRequestMethod();
+$token  = $req->getBearerToken();
+$body   = json_decode($req->getBody(), true);  // for JSON API endpoints
+$https  = $req->isHttps();
+
+// Bearer token API guard
+$token = $req->getBearerToken();
+if (!$token || !validateJwt($token)) {
+    $app->json(401, ['error' => 'Unauthorized']);
+}
+```
+
+---
+
+## URL ($url = $app->url)
+
+current(): string                      — full URL including query string
+host(): string                         — scheme + host: 'https://example.com'
+path(): string                         — REQUEST_URI (path + query string)
+referrer(): ?string                    — HTTP_REFERER or null
+queryParam(string $key, mixed $default = null): mixed  — reads from $_GET
+queryParams(string $url): array        — parse query params from any URL string
+build(string $base, array $params): string
+removeParam(string $url, string $param): string
+isValid(string $url): bool
+domainInfo(string $url): ?array        — ['domain_name', 'domain_ip'] or null
+
+```php
+$url = $app->url;
+
+$current = $url->current();
+$host    = $url->host();
+$page    = $url->queryParam('page', 1);
+$built   = $url->build('/search', ['q' => 'php', 'page' => 2]);
+$cleaned = $url->removeParam($current, 'token');
+$valid   = $url->isValid('https://example.com');
+```
+
+---
+
+## LOCALIZATION ($lang = $app->language — requires multi_lang => true)
+
+translate(string $key, array $replacements = []): string
+t(string $key, array $replacements = []): string  — alias
+setLanguage(string $lang): void
+getLanguage(): string
+getSupportedLanguages(): array
+hasTranslation(string $key): bool
+
+Lang files: JSON in lang/ directory (lang/en.json, lang/ar.json, etc.)
+```json
+{ "welcome": "Welcome, :name!", "logout": "Logout" }
+```
+
+```php
+$lang = $app->language;
+
+echo $lang->t('welcome', ['name' => 'Alice']);  // 'Welcome, Alice!'
+echo $lang->t('logout');
+$lang->setLanguage('ar');
+$current = $lang->getLanguage();
+```
+
+---
+
+## ERROR HANDLING & EXCEPTIONS
+
+### Exception classes (JiFramework\Exceptions\)
+HttpException(int $code, string $message)
+NotFoundException(string $message = '')       — 404
+ForbiddenException(string $message = '')      — 403
+UnauthorizedException(string $message = '')   — 401
+DatabaseException(string $message)            — 500
+ValidationException(array $errors, string $message = '')  — 422
+  getErrors(): array
+
+```php
+use JiFramework\Exceptions\NotFoundException;
+use JiFramework\Exceptions\ForbiddenException;
+use JiFramework\Exceptions\UnauthorizedException;
+use JiFramework\Exceptions\ValidationException;
+
+// Via $app->abort()
+$app->abort(404, 'Post not found');
+$app->abort(403);
+
+// Via typed exceptions
+throw new NotFoundException('Post not found');
+throw new ForbiddenException('Access denied');
+throw new UnauthorizedException();
+
+// Catch ValidationException
+try {
+    $val->make($_POST, $rules)->throw();
+} catch (ValidationException $e) {
+    $errors = $e->getErrors();
+    $app->json(422, ['errors' => $errors]);
+}
+```
+
+Custom error template (jiconfig.php):
+  'error_template' => __DIR__ . '/views/errors/error.php'
+  — Variables available inside: $errorCode (int), $errorMessage (string)
+
+---
+
+## COMPLETE EXAMPLES
+
+### Standard page file (plug-and-play mode)
+```php
+<?php
+require __DIR__ . '/../vendor/autoload.php';
+
+use JiFramework\Core\App\App;
+use JiFramework\Core\Utilities\DateTimeHelper;
+
+$app = new App();
+
+$db      = $app->db;
+$auth    = $app->auth;
+$session = $app->sessionManager;
+$str     = $app->str;
+$pager   = $app->paginator;
+$log     = $app->logger;
+
+// Guard
+if (!$auth->isLoggedIn()) {
+    $app->redirect('/login');
+}
+
+$user = $auth->getUser();
+
+// Fetch paginated posts
+$result = $db->table('posts')
+    ->where('user_id', '=', $user['id'])
+    ->orderBy('created_at', 'DESC')
+    ->paginate(10);
+
+$log->info('Dashboard loaded', ['user_id' => $user['id']]);
+?>
+<!-- HTML template below, $result->data, $user available -->
+```
+
+### JSON API endpoint
+```php
+<?php
+require __DIR__ . '/vendor/autoload.php';
+
+use JiFramework\Core\App\App;
+use JiFramework\Core\Utilities\DateTimeHelper;
+
+$app = new App();
+
+$db      = $app->db;
+$val     = $app->validator;
+$enc     = $app->encryption;
+$session = $app->sessionManager;
+$req     = $app->request;
+$log     = $app->logger;
+
+if ($req->getRequestMethod() !== 'POST') {
+    $app->json(405, ['error' => 'Method not allowed']);
+}
+
+$body = json_decode($req->getBody(), true);
+
+$v = $val->make($body, [
+    'name'     => 'required|min:2|max:100',
+    'email'    => 'required|email',
+    'password' => 'required|min:8',
+]);
+
+if ($v->fails()) {
+    $app->json(422, ['errors' => $v->errors()]);
+}
+
+$exists = $db->table('users')->where('email', '=', $body['email'])->exists();
+if ($exists) {
+    $app->json(409, ['error' => 'Email already registered']);
+}
+
+$id = $db->table('users')->insertGetId([
+    'name'       => $body['name'],
+    'email'      => $body['email'],
+    'password'   => $enc->hashPassword($body['password']),
+    'created_at' => DateTimeHelper::now(),
+]);
+
+$log->info('User registered', ['id' => $id, 'email' => $body['email']]);
+$app->json(201, ['id' => $id]);
+```
+
+### Login page
+```php
+<?php
+require __DIR__ . '/../vendor/autoload.php';
+
+use JiFramework\Core\App\App;
+
+$app = new App();
+
+$auth    = $app->auth;
+$session = $app->sessionManager;
+$val     = $app->validator;
+
+if ($auth->isLoggedIn()) {
+    $app->redirect('/dashboard');
+}
+
+$error = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $session->csrfMiddleware();
+
+    $v = $val->make($_POST, [
+        'email'    => 'required|email',
+        'password' => 'required',
+    ]);
+
+    if ($v->fails()) {
+        $error = $v->first('email') ?: $v->first('password');
+    } elseif ($auth->loginUser($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
+        $session->flashSuccess('Welcome back!');
+        $app->redirect('/dashboard');
+    } else {
+        $error = 'Invalid email or password.';
+    }
+}
+
+$token = $session->generateCsrfToken();
+// render HTML form with $error and $token
+```
+
+---
+
+## RULES FOR AI ASSISTANTS
+
+1.  Assign $app components to variables first ($db, $session, $val, etc.) — never chain $app-> everywhere
+2.  ALWAYS use $db->table() — never write raw SQL, raw PDO, or raw mysqli
+3.  ALWAYS use $val->make() — never write custom validation logic
+4.  ALWAYS use $str->escape() on user output — never call htmlspecialchars() directly
+5.  ALWAYS use $app->json() for API responses — never call header()+json_encode()+exit manually
+6.  ALWAYS use $app->redirect() — never call header('Location:...') directly
+7.  ALWAYS use $log for all logging — never use error_log() or file_put_contents() for logs
+8.  ALWAYS use $enc->hashPassword() — never call password_hash() directly
+9.  ALWAYS use $cache to cache expensive queries — check has() before computing
+10. ALWAYS use DateTimeHelper::now() — never call date() or new DateTime() directly
+11. ALWAYS use $app->abort() or typed Exceptions to stop execution — never die() or exit()
+12. ALWAYS use $session for session operations — never access $_SESSION directly
+13. ALWAYS use $req->getClientIp() — never read $_SERVER['REMOTE_ADDR'] directly
+14. ALWAYS use $http for outbound HTTP — never use file_get_contents() with URLs or raw curl
+15. ALWAYS use $fm for file operations — never use raw fopen/fwrite/unlink
+16. ALWAYS use $str->slugify() for URL slugs — never write custom slug functions
+17. ALWAYS use $enc->randomBytes() or $str->randomToken() for tokens — never use md5(rand()) or uniqid()
+18. ALWAYS use $pager->renderLinks() for pagination HTML — never build pagination HTML manually
+19. ALWAYS use $db->transaction() for multi-step writes — never manage transactions manually
+20. ALWAYS use $req->getBearerToken() for API auth headers — never parse Authorization header manually
+
+---
+# End of JiFramework llms.txt
+# Full documentation: https://jiframework.com
+# GitHub: https://github.com/jahurul1/JiFramework

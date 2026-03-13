@@ -4,326 +4,850 @@ namespace JiFramework\Core\Utilities;
 use JiFramework\Config\Config;
 use DateTime;
 use DateTimeZone;
-use Exception;
 
 class DateTimeHelper
 {
+    /** Default format for database storage and general use. */
+    const DB_FORMAT = 'Y-m-d H:i:s';
+
+    // =========================================================================
+    // Config / Timezone info
+    // =========================================================================
+
     /**
-     * Retrieves the application's default timezone.
-     *
-     * This function returns the application's default timezone as defined by the
-     * Config class, or falls back to the system default timezone.
-     *
-     * @return string The application's default timezone.
+     * Get the application's configured timezone.
+     * Falls back to the system default if Config::$timezone is empty.
      */
-    public static function getDefaultTimezone(): string
-    {   
-        // Check if the TIMEZONE constant is defined and not empty in the Config class
-        if (defined('JiFramework\Config\Config::TIMEZONE') && !empty(Config::TIMEZONE)) {
-            return Config::TIMEZONE;
-        } else {
-            return date_default_timezone_get();
+    public static function getAppTimezone(): string
+    {
+        return !empty(Config::$timezone) ? Config::$timezone : date_default_timezone_get();
+    }
+
+    /**
+     * Check if a timezone identifier is valid.
+     *
+     * @param string $timezone  e.g. 'Asia/Dhaka', 'UTC', 'America/New_York'
+     */
+    public static function isValidTimezone(string $timezone): bool
+    {
+        return in_array($timezone, DateTimeZone::listIdentifiers(), true);
+    }
+
+    /**
+     * Get all supported timezone identifiers.
+     *
+     * @return string[]
+     */
+    public static function getSupportedTimezones(): array
+    {
+        return DateTimeZone::listIdentifiers();
+    }
+
+    // =========================================================================
+    // Current time
+    // =========================================================================
+
+    /**
+     * Get the current datetime in the app timezone (or a specific timezone).
+     *
+     * @param string $format    Output format (default: 'Y-m-d H:i:s')
+     * @param string $timezone  Timezone override. Empty = app timezone.
+     */
+    public static function now(string $format = self::DB_FORMAT, string $timezone = ''): string
+    {
+        $tz = new DateTimeZone(self::resolveTimezone($timezone));
+        return (new DateTime('now', $tz))->format($format);
+    }
+
+    /**
+     * Get today's date in the app timezone.
+     *
+     * @param string $format    Output format (default: 'Y-m-d')
+     * @param string $timezone  Timezone override.
+     */
+    public static function today(string $format = 'Y-m-d', string $timezone = ''): string
+    {
+        return self::now($format, $timezone);
+    }
+
+    /**
+     * Get tomorrow's date in the app timezone.
+     *
+     * @param string $format    Output format (default: 'Y-m-d')
+     * @param string $timezone  Timezone override.
+     */
+    public static function tomorrow(string $format = 'Y-m-d', string $timezone = ''): string
+    {
+        $tz = new DateTimeZone(self::resolveTimezone($timezone));
+        return (new DateTime('tomorrow', $tz))->format($format);
+    }
+
+    /**
+     * Get yesterday's date in the app timezone.
+     *
+     * @param string $format    Output format (default: 'Y-m-d')
+     * @param string $timezone  Timezone override.
+     */
+    public static function yesterday(string $format = 'Y-m-d', string $timezone = ''): string
+    {
+        $tz = new DateTimeZone(self::resolveTimezone($timezone));
+        return (new DateTime('yesterday', $tz))->format($format);
+    }
+
+    // =========================================================================
+    // Format only (no timezone conversion)
+    // =========================================================================
+
+    /**
+     * Reformat a datetime string without changing its timezone.
+     *
+     * @param string $targetFormat  Desired output format
+     * @param string $datetime      Input datetime string
+     * @param string $sourceFormat  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function format(
+        string $targetFormat,
+        string $datetime,
+        string $sourceFormat = self::DB_FORMAT
+    ): string {
+        return self::makeDateTime($datetime, $sourceFormat)->format($targetFormat);
+    }
+
+    /**
+     * Format a datetime for human-readable display.
+     * e.g. '2024-01-15 15:30:00' → 'Jan 15, 2024 3:30 PM'
+     *
+     * @param string $datetime      Input datetime string
+     * @param string $sourceFormat  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function formatForDisplay(string $datetime, string $sourceFormat = self::DB_FORMAT): string
+    {
+        return self::format('M j, Y g:i A', $datetime, $sourceFormat);
+    }
+
+    // =========================================================================
+    // Timezone conversion
+    // =========================================================================
+
+    /**
+     * Convert a datetime string from one timezone to another.
+     *
+     * @param string $datetime      Input datetime string
+     * @param string $fromTz        Source timezone (e.g. 'Europe/Warsaw')
+     * @param string $toTz          Target timezone (e.g. 'Asia/Kolkata')
+     * @param string $format        Output format (default: 'Y-m-d H:i:s')
+     * @param string $sourceFormat  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function convertTimezone(
+        string $datetime,
+        string $fromTz,
+        string $toTz,
+        string $format = self::DB_FORMAT,
+        string $sourceFormat = self::DB_FORMAT
+    ): string {
+        $dt = self::makeDateTime($datetime, $sourceFormat, $fromTz);
+        $dt->setTimezone(new DateTimeZone($toTz));
+        return $dt->format($format);
+    }
+
+    /**
+     * Convert a UTC datetime to a target timezone for display.
+     * Shortcut for convertTimezone(..., 'UTC', $toTimezone).
+     *
+     * @param string $datetime    UTC datetime string
+     * @param string $toTimezone  Target timezone (e.g. 'Asia/Dhaka')
+     * @param string $format      Output format (default: 'Y-m-d H:i:s')
+     */
+    public static function fromUtc(
+        string $datetime,
+        string $toTimezone,
+        string $format = self::DB_FORMAT
+    ): string {
+        return self::convertTimezone($datetime, 'UTC', $toTimezone, $format);
+    }
+
+    /**
+     * Convert a datetime from a source timezone to UTC.
+     * Shortcut for convertTimezone(..., $fromTimezone, 'UTC').
+     *
+     * @param string $datetime      Input datetime string
+     * @param string $fromTimezone  Source timezone (e.g. 'Asia/Dhaka')
+     * @param string $format        Output format (default: 'Y-m-d H:i:s')
+     */
+    public static function toUtc(
+        string $datetime,
+        string $fromTimezone,
+        string $format = self::DB_FORMAT
+    ): string {
+        return self::convertTimezone($datetime, $fromTimezone, 'UTC', $format);
+    }
+
+    // =========================================================================
+    // DB helpers
+    // =========================================================================
+
+    /**
+     * Prepare a datetime for database storage by converting to UTC.
+     * Uses the app timezone as the source if $fromTimezone is not specified.
+     * Output is always 'Y-m-d H:i:s'.
+     *
+     * Single-timezone apps: do not use this — just call now() and store directly.
+     * Multi-timezone apps: always call this before saving user-submitted datetimes.
+     *
+     * @param string $datetime      Input datetime string
+     * @param string $fromTimezone  Source timezone. Empty = app timezone.
+     */
+    public static function forDatabase(string $datetime, string $fromTimezone = ''): string
+    {
+        return self::toUtc($datetime, self::resolveTimezone($fromTimezone), self::DB_FORMAT);
+    }
+
+    /**
+     * Convert a UTC datetime retrieved from the database to the app timezone (or specified timezone).
+     *
+     * @param string $datetime    UTC datetime string from DB
+     * @param string $toTimezone  Target timezone. Empty = app timezone.
+     * @param string $format      Output format (default: 'Y-m-d H:i:s')
+     */
+    public static function fromDatabase(
+        string $datetime,
+        string $toTimezone = '',
+        string $format = self::DB_FORMAT
+    ): string {
+        return self::fromUtc($datetime, self::resolveTimezone($toTimezone), $format);
+    }
+
+    // =========================================================================
+    // Manipulation
+    // =========================================================================
+
+    /**
+     * Add days to a datetime string.
+     *
+     * @param string $date    Input datetime string
+     * @param int    $days    Number of days to add (negative to subtract)
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function addDays(string $date, int $days, string $format = self::DB_FORMAT): string
+    {
+        return self::modify($date, ($days >= 0 ? "+{$days}" : "{$days}") . ' days', $format);
+    }
+
+    /** Subtract days from a datetime string. */
+    public static function subtractDays(string $date, int $days, string $format = self::DB_FORMAT): string
+    {
+        return self::addDays($date, -abs($days), $format);
+    }
+
+    /**
+     * Add hours to a datetime string.
+     *
+     * @param string $date    Input datetime string
+     * @param int    $hours   Number of hours to add (negative to subtract)
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function addHours(string $date, int $hours, string $format = self::DB_FORMAT): string
+    {
+        return self::modify($date, ($hours >= 0 ? "+{$hours}" : "{$hours}") . ' hours', $format);
+    }
+
+    /** Subtract hours from a datetime string. */
+    public static function subtractHours(string $date, int $hours, string $format = self::DB_FORMAT): string
+    {
+        return self::addHours($date, -abs($hours), $format);
+    }
+
+    /**
+     * Add minutes to a datetime string.
+     *
+     * @param string $date     Input datetime string
+     * @param int    $minutes  Number of minutes to add (negative to subtract)
+     * @param string $format   Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function addMinutes(string $date, int $minutes, string $format = self::DB_FORMAT): string
+    {
+        return self::modify($date, ($minutes >= 0 ? "+{$minutes}" : "{$minutes}") . ' minutes', $format);
+    }
+
+    /** Subtract minutes from a datetime string. */
+    public static function subtractMinutes(string $date, int $minutes, string $format = self::DB_FORMAT): string
+    {
+        return self::addMinutes($date, -abs($minutes), $format);
+    }
+
+    /**
+     * Add months to a datetime string.
+     *
+     * @param string $date    Input datetime string
+     * @param int    $months  Number of months to add (negative to subtract)
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function addMonths(string $date, int $months, string $format = self::DB_FORMAT): string
+    {
+        return self::modify($date, ($months >= 0 ? "+{$months}" : "{$months}") . ' months', $format);
+    }
+
+    /** Subtract months from a datetime string. */
+    public static function subtractMonths(string $date, int $months, string $format = self::DB_FORMAT): string
+    {
+        return self::addMonths($date, -abs($months), $format);
+    }
+
+    /**
+     * Add years to a datetime string.
+     *
+     * @param string $date    Input datetime string
+     * @param int    $years   Number of years to add (negative to subtract)
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function addYears(string $date, int $years, string $format = self::DB_FORMAT): string
+    {
+        return self::modify($date, ($years >= 0 ? "+{$years}" : "{$years}") . ' years', $format);
+    }
+
+    /** Subtract years from a datetime string. */
+    public static function subtractYears(string $date, int $years, string $format = self::DB_FORMAT): string
+    {
+        return self::addYears($date, -abs($years), $format);
+    }
+
+    // =========================================================================
+    // Start / End of period
+    // =========================================================================
+
+    /**
+     * Get the start of the day (00:00:00).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function startOfDay(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->setTime(0, 0, 0);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the end of the day (23:59:59).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function endOfDay(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->setTime(23, 59, 59);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the first moment of the month (first day, 00:00:00).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function startOfMonth(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->modify('first day of this month')->setTime(0, 0, 0);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the last moment of the month (last day, 23:59:59).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function endOfMonth(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->modify('last day of this month')->setTime(23, 59, 59);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the first moment of the year (Jan 1, 00:00:00).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function startOfYear(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->modify('first day of january')->setTime(0, 0, 0);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the last moment of the year (Dec 31, 23:59:59).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function endOfYear(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dt->modify('last day of december')->setTime(23, 59, 59);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the start of the ISO week (Monday 00:00:00).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function startOfWeek(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dayOfWeek = (int) $dt->format('N'); // 1 = Mon, 7 = Sun (ISO 8601)
+        $dt->modify('-' . ($dayOfWeek - 1) . ' days')->setTime(0, 0, 0);
+        return $dt->format($format);
+    }
+
+    /**
+     * Get the end of the ISO week (Sunday 23:59:59).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input and output format (default: 'Y-m-d H:i:s')
+     */
+    public static function endOfWeek(string $date, string $format = self::DB_FORMAT): string
+    {
+        $dt = self::makeDateTime($date, $format);
+        $dayOfWeek = (int) $dt->format('N'); // 1 = Mon, 7 = Sun (ISO 8601)
+        $dt->modify('+' . (7 - $dayOfWeek) . ' days')->setTime(23, 59, 59);
+        return $dt->format($format);
+    }
+
+    // =========================================================================
+    // Comparison
+    // =========================================================================
+
+    /**
+     * Check if a datetime is in the past (relative to now in the app timezone).
+     *
+     * @param string $datetime  Input datetime string
+     * @param string $format    Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isPast(string $datetime, string $format = self::DB_FORMAT): bool
+    {
+        $tz  = new DateTimeZone(self::getAppTimezone());
+        $dt  = self::makeDateTime($datetime, $format, self::getAppTimezone());
+        $now = new DateTime('now', $tz);
+        return $dt < $now;
+    }
+
+    /**
+     * Check if a datetime is in the future (relative to now in the app timezone).
+     *
+     * @param string $datetime  Input datetime string
+     * @param string $format    Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isFuture(string $datetime, string $format = self::DB_FORMAT): bool
+    {
+        $tz  = new DateTimeZone(self::getAppTimezone());
+        $dt  = self::makeDateTime($datetime, $format, self::getAppTimezone());
+        $now = new DateTime('now', $tz);
+        return $dt > $now;
+    }
+
+    /**
+     * Check if $date1 is strictly before $date2.
+     *
+     * @param string $date1   First datetime string
+     * @param string $date2   Second datetime string
+     * @param string $format  Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function isBefore(string $date1, string $date2, string $format = self::DB_FORMAT): bool
+    {
+        return self::makeDateTime($date1, $format) < self::makeDateTime($date2, $format);
+    }
+
+    /**
+     * Check if $date1 is strictly after $date2.
+     *
+     * @param string $date1   First datetime string
+     * @param string $date2   Second datetime string
+     * @param string $format  Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function isAfter(string $date1, string $date2, string $format = self::DB_FORMAT): bool
+    {
+        return self::makeDateTime($date1, $format) > self::makeDateTime($date2, $format);
+    }
+
+    /**
+     * Check if two datetimes fall on the same calendar day.
+     *
+     * @param string $date1   First datetime string
+     * @param string $date2   Second datetime string
+     * @param string $format  Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function isSameDay(string $date1, string $date2, string $format = self::DB_FORMAT): bool
+    {
+        return self::makeDateTime($date1, $format)->format('Y-m-d')
+            === self::makeDateTime($date2, $format)->format('Y-m-d');
+    }
+
+    /**
+     * Check if a datetime falls between $start and $end (inclusive).
+     *
+     * @param string $datetime  The datetime to check
+     * @param string $start     Start of range
+     * @param string $end       End of range
+     * @param string $format    Input format for all three dates (default: 'Y-m-d H:i:s')
+     */
+    public static function isBetween(
+        string $datetime,
+        string $start,
+        string $end,
+        string $format = self::DB_FORMAT
+    ): bool {
+        $dt      = self::makeDateTime($datetime, $format);
+        $dtStart = self::makeDateTime($start, $format);
+        $dtEnd   = self::makeDateTime($end, $format);
+        return $dt >= $dtStart && $dt <= $dtEnd;
+    }
+
+    /**
+     * Check if a datetime falls on today's date in the app timezone.
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isToday(string $date, string $format = self::DB_FORMAT): bool
+    {
+        $tz = new DateTimeZone(self::getAppTimezone());
+        return self::makeDateTime($date, $format)->format('Y-m-d')
+            === (new DateTime('now', $tz))->format('Y-m-d');
+    }
+
+    /**
+     * Check if a datetime falls on yesterday's date in the app timezone.
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isYesterday(string $date, string $format = self::DB_FORMAT): bool
+    {
+        $tz = new DateTimeZone(self::getAppTimezone());
+        return self::makeDateTime($date, $format)->format('Y-m-d')
+            === (new DateTime('yesterday', $tz))->format('Y-m-d');
+    }
+
+    /**
+     * Check if a datetime falls on tomorrow's date in the app timezone.
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isTomorrow(string $date, string $format = self::DB_FORMAT): bool
+    {
+        $tz = new DateTimeZone(self::getAppTimezone());
+        return self::makeDateTime($date, $format)->format('Y-m-d')
+            === (new DateTime('tomorrow', $tz))->format('Y-m-d');
+    }
+
+    /**
+     * Check if a date falls on a weekend (Saturday or Sunday).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isWeekend(string $date, string $format = self::DB_FORMAT): bool
+    {
+        return in_array(self::makeDateTime($date, $format)->format('N'), ['6', '7'], true);
+    }
+
+    /**
+     * Check if a date falls on a weekday (Monday through Friday).
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function isWeekday(string $date, string $format = self::DB_FORMAT): bool
+    {
+        return !self::isWeekend($date, $format);
+    }
+
+    // =========================================================================
+    // Integer diffs
+    // =========================================================================
+
+    /**
+     * Get the difference in whole days between two dates.
+     *
+     * @param string $date1     First datetime string
+     * @param string $date2     Second datetime string
+     * @param bool   $absolute  Whether to return absolute value (default: true)
+     * @param string $format    Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function diffInDays(
+        string $date1,
+        string $date2,
+        bool $absolute = true,
+        string $format = self::DB_FORMAT
+    ): int {
+        $interval = self::makeDateTime($date1, $format)
+            ->diff(self::makeDateTime($date2, $format));
+        $days = (int) $interval->days;
+        return $absolute ? $days : ($interval->invert ? -$days : $days);
+    }
+
+    /**
+     * Get the difference in whole hours between two datetimes.
+     *
+     * @param string $date1     First datetime string
+     * @param string $date2     Second datetime string
+     * @param bool   $absolute  Whether to return absolute value (default: true)
+     * @param string $format    Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function diffInHours(
+        string $date1,
+        string $date2,
+        bool $absolute = true,
+        string $format = self::DB_FORMAT
+    ): int {
+        $seconds = self::makeDateTime($date2, $format)->getTimestamp()
+                 - self::makeDateTime($date1, $format)->getTimestamp();
+        return (int)(($absolute ? abs($seconds) : $seconds) / 3600);
+    }
+
+    /**
+     * Get the difference in whole minutes between two datetimes.
+     *
+     * @param string $date1     First datetime string
+     * @param string $date2     Second datetime string
+     * @param bool   $absolute  Whether to return absolute value (default: true)
+     * @param string $format    Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function diffInMinutes(
+        string $date1,
+        string $date2,
+        bool $absolute = true,
+        string $format = self::DB_FORMAT
+    ): int {
+        $seconds = self::makeDateTime($date2, $format)->getTimestamp()
+                 - self::makeDateTime($date1, $format)->getTimestamp();
+        return (int)(($absolute ? abs($seconds) : $seconds) / 60);
+    }
+
+    /**
+     * Get the difference in seconds between two datetimes.
+     *
+     * @param string $date1     First datetime string
+     * @param string $date2     Second datetime string
+     * @param bool   $absolute  Whether to return absolute value (default: true)
+     * @param string $format    Input format for both dates (default: 'Y-m-d H:i:s')
+     */
+    public static function diffInSeconds(
+        string $date1,
+        string $date2,
+        bool $absolute = true,
+        string $format = self::DB_FORMAT
+    ): int {
+        $seconds = self::makeDateTime($date2, $format)->getTimestamp()
+                 - self::makeDateTime($date1, $format)->getTimestamp();
+        return $absolute ? abs($seconds) : $seconds;
+    }
+
+    // =========================================================================
+    // Human readable
+    // =========================================================================
+
+    /**
+     * Get a human-readable elapsed or remaining time string.
+     *
+     * Examples:
+     *   '3 hours ago', 'in 2 days', '1 year, 3 months ago', 'just now'
+     *
+     * @param string          $datetime  Input datetime string
+     * @param bool            $full      Show all components (false = largest unit only)
+     * @param string          $format    Input datetime format (default: 'Y-m-d H:i:s')
+     * @param string          $now       Reference point ('now' or a datetime string in $format)
+     */
+    public static function getTimeElapsedString(
+        string $datetime,
+        bool $full = false,
+        string $format = self::DB_FORMAT,
+        string $now = 'now'
+    ): string {
+        $appTz = self::getAppTimezone();
+        $tz    = new DateTimeZone($appTz);
+
+        $dt    = self::makeDateTime($datetime, $format, $appTz);
+        $nowDt = $now === 'now'
+            ? new DateTime('now', $tz)
+            : self::makeDateTime($now, $format, $appTz);
+
+        // $nowDt->diff($dt): positive (invert=0) when $dt is in the future
+        $diff     = $nowDt->diff($dt);
+        $isFuture = $diff->invert === 0;
+
+        $parts = [];
+        if ($diff->y) $parts[] = $diff->y . ' year'   . ($diff->y > 1 ? 's' : '');
+        if ($diff->m) $parts[] = $diff->m . ' month'  . ($diff->m > 1 ? 's' : '');
+        if ($diff->d) $parts[] = $diff->d . ' day'    . ($diff->d > 1 ? 's' : '');
+        if ($diff->h) $parts[] = $diff->h . ' hour'   . ($diff->h > 1 ? 's' : '');
+        if ($diff->i) $parts[] = $diff->i . ' minute' . ($diff->i > 1 ? 's' : '');
+        if ($diff->s) $parts[] = $diff->s . ' second' . ($diff->s > 1 ? 's' : '');
+
+        if (empty($parts)) {
+            return 'just now';
         }
+
+        if (!$full) {
+            $parts = array_slice($parts, 0, 1);
+        }
+
+        $string = implode(', ', $parts);
+
+        return $isFuture ? 'in ' . $string : $string . ' ago';
+    }
+
+    // =========================================================================
+    // Validate
+    // =========================================================================
+
+    /**
+     * Check if a date string is valid and matches the given format exactly.
+     *
+     * @param string $date    The date string to validate
+     * @param string $format  Expected format (default: 'Y-m-d H:i:s')
+     */
+    public static function isValidDate(string $date, string $format = self::DB_FORMAT): bool
+    {
+        $dt = DateTime::createFromFormat($format, $date);
+        return $dt !== false && $dt->format($format) === $date;
+    }
+
+    // =========================================================================
+    // Info / Misc
+    // =========================================================================
+
+    /**
+     * Calculate age in whole years from a birthdate to today (in the app timezone).
+     *
+     * @param string $birthdate  Birthdate string
+     * @param string $format     Input format (default: 'Y-m-d')
+     */
+    public static function age(string $birthdate, string $format = 'Y-m-d'): int
+    {
+        $tz    = new DateTimeZone(self::getAppTimezone());
+        $birth = self::makeDateTime($birthdate, $format);
+        $now   = new DateTime('now', $tz);
+        return (int) $birth->diff($now)->y;
+    }
+
+    /**
+     * Get the full weekday name of a date (e.g. 'Monday', 'Friday').
+     *
+     * @param string $date    Input datetime string
+     * @param string $format  Input format (default: 'Y-m-d H:i:s')
+     */
+    public static function getWeekday(string $date, string $format = self::DB_FORMAT): string
+    {
+        return self::makeDateTime($date, $format)->format('l');
     }
 
     /**
      * Convert a datetime string to a Unix timestamp.
      *
-     * @param string $datetime The datetime string.
-     * @param string $format   The format of the input datetime string.
-     * @return int             The Unix timestamp.
-     * @throws Exception       If the datetime cannot be parsed.
+     * @param string $datetime  Input datetime string
+     * @param string $timezone  Timezone of the input. Empty = app timezone.
+     * @param string $format    Input format (default: 'Y-m-d H:i:s')
      */
-    public static function datetimeToTimestamp($datetime, $format = 'Y-m-d H:i:s')
-    {
-        // Create a DateTime object from the input datetime string
-        $date = DateTime::createFromFormat($format, $datetime);
-        if ($date === false) {
-            throw new Exception("Invalid datetime format: {$datetime}");
-        }
-        return $date->getTimestamp();
+    public static function toTimestamp(
+        string $datetime,
+        string $timezone = '',
+        string $format = self::DB_FORMAT
+    ): int {
+        return self::makeDateTime($datetime, $format, self::resolveTimezone($timezone))->getTimestamp();
     }
 
     /**
-     * Convert a Unix timestamp to a formatted datetime string.
+     * Convert a Unix timestamp to a datetime string.
      *
-     * @param int    $timestamp The Unix timestamp.
-     * @param string $format    The desired output format.
-     * @return string           The formatted datetime string.
+     * @param int    $timestamp  Unix timestamp
+     * @param string $timezone   Output timezone. Empty = app timezone.
+     * @param string $format     Output format (default: 'Y-m-d H:i:s')
      */
-    public static function timestampToDatetime($timestamp, $format = 'Y-m-d H:i:s')
-    {
-        // Use the configured timezone instead of system timezone
-        $dateTime = new DateTime("@$timestamp");
-        $dateTime->setTimezone(new DateTimeZone(self::getDefaultTimezone()));
-        return $dateTime->format($format);
+    public static function fromTimestamp(
+        int $timestamp,
+        string $timezone = '',
+        string $format = self::DB_FORMAT
+    ): string {
+        $dt = new DateTime("@{$timestamp}");
+        $dt->setTimezone(new DateTimeZone(self::resolveTimezone($timezone)));
+        return $dt->format($format);
     }
 
-        /**
-     * Converts a date string from one format to another, with an optional source format.
+    /**
+     * Get the DateInterval between two dates.
+     * For simple numeric differences prefer diffInDays/Hours/Minutes/Seconds.
      *
-     * If a source format is provided, the function attempts to parse the date string according to
-     * that format before converting it to the target format. If no source format is specified,
-     * it assumes the date string is in a format understandable by strtotime().
-     *
-     * @param string $targetFormat The target date format, as specified by PHP's date() function.
-     * @param string $dateString The input date string to be converted.
-     * @param string $sourceFormat Optional. The source date format. If provided, used to parse $dateString.
-     * @return string|false The formatted date string, or false if input date is invalid or conversion fails.
+     * @param string $date1     First datetime string
+     * @param string $date2     Second datetime string
+     * @param bool   $absolute  Whether to return absolute difference
+     * @param string $format    Input format for both dates (default: 'Y-m-d H:i:s')
+     * @return \DateInterval
      */
-    public static function formatDate($targetFormat, $dateString, $sourceFormat = '') {
-		// Create DateTime object from the source format if provided
-		if (!empty($sourceFormat)) {
-			$date = DateTime::createFromFormat($sourceFormat, $dateString);
-			// Check if the date creation was successful
-			if ($date === false) {
-				return false; // Indicate failure to parse the date
-			}
-		} else {
-			// Use DateTime constructor for conversion if no source format is provided
-			try {
-				$date = new DateTime($dateString);
-			} catch (Exception $e) {
-				return false; // Indicate failure to parse the date
-			}
-		}
+    public static function getDateDifference(
+        string $date1,
+        string $date2,
+        bool $absolute = false,
+        string $format = self::DB_FORMAT
+    ): \DateInterval {
+        return self::makeDateTime($date1, $format)
+            ->diff(self::makeDateTime($date2, $format), $absolute);
+    }
 
-		// Format the date and return (no timezone conversion - preserve original time)
-		return $date->format($targetFormat);
-	}
+    // =========================================================================
+    // Private helpers
+    // =========================================================================
 
     /**
-     * Get a human-readable time elapsed string.
+     * Create a DateTime object from a string and format.
+     * Optionally set a timezone on the parsed result.
      *
-     * @param string       $datetime The datetime string.
-     * @param bool         $full     Whether to return the full time difference.
-     * @param string       $format   The format of the datetime string.
-     * @param string|DateTime $now   The current datetime or 'now'.
-     * @return string                The elapsed time string.
-     * @throws Exception             If the datetime cannot be parsed.
+     * @throws \Exception If the string cannot be parsed with the given format.
      */
-    public static function getTimeElapsedString($datetime, $full = false, $format = 'Y-m-d H:i:s', $now = 'now')
-    {
-        // Create DateTime objects for the given datetime and now
-        $dateTime = DateTime::createFromFormat($format, $datetime);
-        $nowTime = $now === 'now' ? new DateTime() : (is_string($now) ? DateTime::createFromFormat($format, $now) : $now);
-
-        if ($dateTime === false || $nowTime === false) {
-            throw new Exception("Invalid datetime format.");
-        }
-
-        // Calculate the difference
-        $diff = $nowTime->diff($dateTime);
-
-        // Total number of days
-        $totalDays = $diff->days;
-
-        // Calculate weeks and remaining days
-        $weeks = floor($totalDays / 7);
-        $days = $totalDays % 7;
-
-        // Map of time units and their singular names
-        $timeComponents = [
-            'y' => 'year',
-            'm' => 'month',
-            'w' => 'week',
-            'd' => 'day',
-            'h' => 'hour',
-            'i' => 'minute',
-            's' => 'second',
-        ];
-
-        $elapsed = [];
-
-        // Years
-        if ($diff->y) {
-            $elapsed['y'] = $diff->y . ' ' . $timeComponents['y'] . ($diff->y > 1 ? 's' : '');
-        }
-
-        // Months
-        if ($diff->m) {
-            $elapsed['m'] = $diff->m . ' ' . $timeComponents['m'] . ($diff->m > 1 ? 's' : '');
-        }
-
-        // Weeks
-        if ($weeks) {
-            $elapsed['w'] = $weeks . ' ' . $timeComponents['w'] . ($weeks > 1 ? 's' : '');
-        }
-
-        // Days
-        if ($days) {
-            $elapsed['d'] = $days . ' ' . $timeComponents['d'] . ($days > 1 ? 's' : '');
-        }
-
-        // Hours
-        if ($diff->h) {
-            $elapsed['h'] = $diff->h . ' ' . $timeComponents['h'] . ($diff->h > 1 ? 's' : '');
-        }
-
-        // Minutes
-        if ($diff->i) {
-            $elapsed['i'] = $diff->i . ' ' . $timeComponents['i'] . ($diff->i > 1 ? 's' : '');
-        }
-
-        // Seconds
-        if ($diff->s) {
-            $elapsed['s'] = $diff->s . ' ' . $timeComponents['s'] . ($diff->s > 1 ? 's' : '');
-        }
-
-        // If not full, only return the first non-zero time component
-        if (!$full) {
-            $elapsed = array_slice($elapsed, 0, 1);
+    private static function makeDateTime(
+        string $datetime,
+        string $format,
+        string $timezone = ''
+    ): DateTime {
+        if ($timezone !== '') {
+            $tz = new DateTimeZone($timezone);
+            $dt = DateTime::createFromFormat($format, $datetime, $tz);
         } else {
-            if(isset($elapsed['w'])) {
-                unset($elapsed['w']);
-            }
+            $dt = DateTime::createFromFormat($format, $datetime);
         }
 
-
-        // Return the formatted string or 'just now' if empty
-        return $elapsed ? implode(', ', $elapsed) . ' ago' : 'just now';
-    }
-
-    /**
-     * Get the difference between two dates.
-     *
-     * @param string $date1    The first date and time.
-     * @param string $date2    The second date and time.
-     * @param bool   $absolute Whether to return absolute difference.
-     * @param string $format   The format of the input dates.
-     * @return \DateInterval   The DateInterval object representing the difference.
-     * @throws Exception       If the dates cannot be parsed.
-     */
-    public static function getDateDifference($dateTime1, $dateTime2, $absolute = false, $format = 'Y-m-d H:i:s')
-    {
-        $dateTime1 = DateTime::createFromFormat($format, $dateTime1);
-        $dateTime2 = DateTime::createFromFormat($format, $dateTime2);
-
-        if ($dateTime1 === false || $dateTime2 === false) {
-            throw new Exception("Invalid date format.");
+        if ($dt === false) {
+            throw new \Exception("Cannot parse '{$datetime}' with format '{$format}'.");
         }
 
-        return $dateTime1->diff($dateTime2, $absolute);
+        return $dt;
     }
 
     /**
-     * Check if a date string is valid according to a specified format.
-     *
-     * @param string $date   The date string to validate.
-     * @param string $format The expected date format.
-     * @return bool          True if valid, false otherwise.
+     * Apply a modify() string to a datetime and return the formatted result.
+     * Uses the app timezone so DST transitions are handled correctly.
      */
-    public static function isValidDate($date, $format = 'Y-m-d H:i:s')
+    private static function modify(string $date, string $modification, string $format): string
     {
-        $dateTime = DateTime::createFromFormat($format, $date);
-        return $dateTime && $dateTime->format($format) === $date;
+        $dt = self::makeDateTime($date, $format, self::getAppTimezone());
+        $dt->modify($modification);
+        return $dt->format($format);
     }
 
     /**
-     * Get the weekday name of a given date.
-     *
-     * @param string $date   The date string.
-     * @param string $format The format of the date string.
-     * @return string        The weekday name.
-     * @throws Exception     If the date cannot be parsed.
+     * Return $timezone if non-empty, otherwise return the app timezone.
      */
-    public static function getWeekday($date, $format = 'Y-m-d H:i:s')
+    private static function resolveTimezone(string $timezone): string
     {
-        $dateTime = DateTime::createFromFormat($format, $date);
-        if ($dateTime === false) {
-            throw new Exception("Invalid date format.");
-        }
-        return $dateTime->format('l'); // 'l' (lowercase 'L') gives the full textual representation of the day
-    }
-
-    /**
-     * Add a specified number of days to a date.
-     *
-     * @param string $date   The original date string.
-     * @param int    $days   The number of days to add.
-     * @param string $format The format of the date string.
-     * @return string        The new date string after adding days.
-     * @throws Exception     If the date cannot be parsed.
-     */
-    public static function addDays($date, $days, $format = 'Y-m-d H:i:s')
-    {
-        $dateTime = DateTime::createFromFormat($format, $date);
-        if ($dateTime === false) {
-            throw new Exception("Invalid date format.");
-        }
-        $dateTime->modify("+{$days} days");
-        return $dateTime->format($format);
-    }
-
-    /**
-     * Subtract a specified number of days from a date.
-     *
-     * @param string $date   The original date string.
-     * @param int    $days   The number of days to subtract.
-     * @param string $format The format of the date string.
-     * @return string        The new date string after subtracting days.
-     * @throws Exception     If the date cannot be parsed.
-     */
-    public static function subtractDays($date, $days, $format = 'Y-m-d H:i:s')
-    {
-        return self::addDays($date, -$days, $format);
-    }
-
-    /**
-     * Get the current datetime string in a specified format and timezone.
-     *
-     * @param string $format   The desired output format.
-     * @param string $timezone The timezone identifier.
-     * @return string          The current datetime string.
-     * @throws Exception       If the timezone is invalid.
-     */
-    public static function getCurrentDatetime($format = 'Y-m-d H:i:s', $timezone = '')
-    {
-        //Check if the timezone is empty and set the default timezone
-        if (empty($timezone)) {
-            $timezone = self::getDefaultTimezone();
-        }
-        $dateTime = new DateTime('now', new DateTimeZone($timezone));
-        return $dateTime->format($format);
-    }
-
-    /**
-     * Get the list of supported timezone identifiers.
-     *
-     * @return array An array of timezone identifiers.
-     */
-    public static function getSupportedTimezones()
-    {
-        return DateTimeZone::listIdentifiers();
-    }
-
-    /**
-     * Get the current datetime string using the default timezone.
-     *
-     * @param string $format The desired output format.
-     * @return string        The current datetime string.
-     */
-    public static function now($format = 'Y-m-d H:i:s')
-    {
-        return self::getCurrentDatetime($format);
-    }
-
-    /**
-     * Format a date for human-readable display.
-     *
-     * @param string $date   The date string to format.
-     * @param string $format The input date format.
-     * @return string        The formatted date string.
-     * @throws Exception     If the date cannot be parsed.
-     */
-    public static function formatForDisplay($date, $format = 'Y-m-d H:i:s')
-    {
-        $dateTime = DateTime::createFromFormat($format, $date);
-        if ($dateTime === false) {
-            throw new Exception("Invalid date format.");
-        }
-        return $dateTime->format('M j, Y g:i A'); // e.g., "Jan 15, 2024 3:30 PM"
+        return $timezone !== '' ? $timezone : self::getAppTimezone();
     }
 }
-
-

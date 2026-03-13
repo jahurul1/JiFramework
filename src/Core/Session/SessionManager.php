@@ -6,221 +6,195 @@ use JiFramework\Config\Config;
 class SessionManager
 {
     /**
-     * Session key for CSRF token.
-     * 
-     *  @var string
+     * Session key for CSRF tokens.
+     * @var string
      */
     protected $csrfTokenKey;
 
     /**
      * Session key for flash messages.
-     * 
-     *  @var string
+     * @var string
      */
     protected $flashMessageKey;
 
     /**
      * CSRF token expiration time in seconds.
-     * 
      * @var int
      */
     protected $tokenExpiry;
 
     /**
-     * Maximum number of CSRF tokens to store.
-     *
+     * Maximum number of CSRF tokens to keep in session.
      * @var int
      */
     protected $maxTokens;
 
     /**
-     * Length of the CSRF token in bytes.
-     *
+     * Length of generated CSRF tokens in bytes.
      * @var int
      */
     protected $tokenLength;
 
-    /**
-     * Constructor initializes session keys and token settings.
-     */
     public function __construct()
     {
-        // Get keys from Config or set defaults
-        $this->csrfTokenKey = Config::CSRF_TOKEN_KEY ?? '_csrf_tokens';
-        $this->flashMessageKey = Config::FLASH_MESSAGE_KEY ?? '_flash_messages';
-
-        // Get token settings from Config or set defaults
-        $this->tokenExpiry = Config::CSRF_TOKEN_EXPIRY ?? 3600; // 1 hour
-        $this->maxTokens = Config::CSRF_TOKEN_LIMIT ?? 100;
-        $this->tokenLength = Config::CSRF_TOKEN_LENGTH ?? 32;
+        $this->csrfTokenKey    = Config::$csrfTokenKey;
+        $this->flashMessageKey = Config::$flashMessageKey;
+        $this->tokenExpiry     = Config::$csrfTokenExpiry;
+        $this->maxTokens       = Config::$csrfTokenLimit;
+        $this->tokenLength     = Config::$csrfTokenLength;
     }
 
-    /**
-     * Generate and store a CSRF token.
-     *
-     * @return string The generated CSRF token.
-     */
-    public function generateCsrfToken()
-    {   
-        // Generate a random token
-        $token = bin2hex(random_bytes($this->tokenLength));
-
-        // Get current timestamp
-        $timestamp = time();
-        
-        // Check if the CSRF token session key is set and is an array
-        if (!isset($_SESSION[$this->csrfTokenKey]) || !is_array($_SESSION[$this->csrfTokenKey])) {
-            // If not, initialize it as an empty array
-            $_SESSION[$this->csrfTokenKey] = [];
-        }
-
-        // If the number of stored tokens exceeds the maximum limit
-        if (count($_SESSION[$this->csrfTokenKey]) >= $this->maxTokens) {
-            // Sort tokens by timestamp in ascending order
-            asort($_SESSION[$this->csrfTokenKey]);
-
-            // Remove the oldest token
-            array_shift($_SESSION[$this->csrfTokenKey]);
-        }
-
-        // Add the new token to the session
-        $_SESSION[$this->csrfTokenKey][$token] = $timestamp;
-        
-        // Return the generated token
-        return $token;  
-    }
+    // =========================================================================
+    // Core session operations
+    // =========================================================================
 
     /**
-     * Verify the CSRF token.
-     *
-     * @param string $token The token to verify.
-     * @return bool True if valid, false otherwise.
+     * Start the session if it is not already active.
      */
-    public function verifyCsrfToken($token){
-        // Check if the token is in the session
-        if (!$token) {
-            // Check for token in headers (for AJAX requests)
-            $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-        }
-        
-        // Current timestamp
-        $currentTime  = time();
-
-        // Check if the token is in the session
-        if (isset($_SESSION[$this->csrfTokenKey][$token])) {
-            $tokenTime = $_SESSION[$this->csrfTokenKey][$token];
-
-            // Check if the token is not expired
-            if (($currentTime - $tokenTime) <= $this->tokenExpiry) {
-                // Remove the token from the session
-                //unset($_SESSION[$this->csrfTokenKey][$token]); // turned off token removal
-                $this->cleanUpCsrfTokens();
-                return true;
-            } else {
-                unset($_SESSION[$this->csrfTokenKey][$token]);
-                $this->cleanUpCsrfTokens();
-                return false;
-            }
-        }
-
-        // If the token is not in the session clear all tokens and return false 
-        $this->cleanUpCsrfTokens();
-        return false;
-
-    }
-
-    /**
-     * Clean up expired CSRF tokens from the session.
-     *
-     * @return void
-     */
-    protected function cleanUpCsrfTokens()
+    public function start(): void
     {
-        // Get current timestamp
-        $currentTime = time();
-
-        // Check if the CSRF token session key is set and is an array
-        if (isset($_SESSION[$this->csrfTokenKey]) && is_array($_SESSION[$this->csrfTokenKey])) {
-            foreach ($_SESSION[$this->csrfTokenKey] as $token => $timestamp) {
-                // Remove expired tokens
-                if (($currentTime - $timestamp) > $this->tokenExpiry) {
-                    unset($_SESSION[$this->csrfTokenKey][$token]);
-                }
-            }
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
         }
     }
 
     /**
-     * Get all CSRF tokens in the session.
-     * 
-     * @return array All CSRF tokens.
+     * Returns true if the session is currently active.
      */
-    public function getAllCsrfTokens()
+    public function isStarted(): bool
     {
-        return $_SESSION[$this->csrfTokenKey] ?? [];
+        return session_status() === PHP_SESSION_ACTIVE;
     }
 
     /**
-     * Set a flash message in the session.
-     *
-     * @param string $type    Message type (e.g., 'success', 'error').
-     * @param string $message The message content.
-     * @param array  $data    Additional data.
-     * @return void
+     * Returns the current session ID.
      */
-    public function setFlashMessage($type, $message, $data = [])
-    {   
-        // Allowed message types
-        $allowedTypes = ['success', 'error', 'info', 'warning'];
+    public function id(): string
+    {
+        return session_id();
+    }
 
-        // Check if the message type is allowed
-        if (!in_array($type, $allowedTypes)) {
-            $type = 'info';
+    /**
+     * Store a value in the session.
+     *
+     * @param string $key   Session key.
+     * @param mixed  $value Any serialisable PHP value.
+     */
+    public function set(string $key, mixed $value): void
+    {
+        $_SESSION[$key] = $value;
+    }
+
+    /**
+     * Retrieve a value from the session.
+     *
+     * @param string $key     Session key.
+     * @param mixed  $default Returned when key does not exist.
+     * @return mixed
+     */
+    public function get(string $key, mixed $default = null): mixed
+    {
+        return $_SESSION[$key] ?? $default;
+    }
+
+    /**
+     * Returns true if the session key exists (even if its value is null).
+     */
+    public function has(string $key): bool
+    {
+        return array_key_exists($key, $_SESSION ?? []);
+    }
+
+    /**
+     * Remove a single key from the session.
+     */
+    public function delete(string $key): void
+    {
+        unset($_SESSION[$key]);
+    }
+
+    /**
+     * Return the entire session data as an array.
+     */
+    public function all(): array
+    {
+        return $_SESSION ?? [];
+    }
+
+    /**
+     * Clear all session data without destroying the session itself.
+     * The session ID remains the same.
+     */
+    public function clear(): void
+    {
+        $_SESSION = [];
+    }
+
+    /**
+     * Fully destroy the session: clears data, expires the cookie, and calls session_destroy().
+     */
+    public function destroy(): void
+    {
+        $_SESSION = [];
+
+        if (!headers_sent() && ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(
+                session_name(),
+                '',
+                time() - 42000,
+                $params['path'],
+                $params['domain'],
+                $params['secure'],
+                $params['httponly']
+            );
         }
 
-        // Add the message to the session
-        $_SESSION[$this->flashMessageKey][] = [
-            'type'    => $type,
-            'message' => $message,
-            'data'    => $data,
-        ];
-    }
-    /**
-     * Retrieve and clear all flash messages from the session.
-     *
-     * @return array The flash messages.
-     */
-    public function getFlashMessages()
-    {
-        // Get flash messages from the session
-        $messages = $_SESSION[$this->flashMessageKey] ?? [];
-
-        // Clear the flash messages
-        unset($_SESSION[$this->flashMessageKey]);
-
-        // Return the messages
-        return $messages;
+        session_destroy();
     }
 
+    // =========================================================================
+    // Session configuration
+    // =========================================================================
+
     /**
-     * Regenerate the session ID.
+     * Regenerate the session ID. Call after privilege escalation (e.g. login)
+     * to prevent session fixation attacks.
      *
      * @param bool $deleteOldSession Whether to delete the old session data.
-     * @return void
      */
-    public function regenerateSession($deleteOldSession = false)
+    public function regenerateSession(bool $deleteOldSession = true): bool
     {
-        session_regenerate_id($deleteOldSession);
+        if (headers_sent()) {
+            trigger_error(
+                '[JiFramework] regenerateSession() has no effect after headers have already been sent.',
+                E_USER_WARNING
+            );
+            return false;
+        }
+
+        return session_regenerate_id($deleteOldSession);
     }
 
     /**
-     * Set session cookie parameters.
+     * Configure session cookie parameters.
      *
-     * @param array $params Array of parameters to set.
-     * @return void
+     * IMPORTANT: Must be called BEFORE session_start() — i.e., before new App().
+     * Has no effect if the session is already active.
+     *
+     * @param array $params Override any of: lifetime, path, domain, secure, httponly, samesite.
      */
-    public function setSessionCookieParams($params = [])
+    public function setSessionCookieParams(array $params = []): void
     {
+        if (session_status() !== PHP_SESSION_NONE) {
+            trigger_error(
+                '[JiFramework] setSessionCookieParams() has no effect after session_start(). '
+                . 'Call it before new App().',
+                E_USER_WARNING
+            );
+            return;
+        }
+
         $defaults = [
             'lifetime' => 0,
             'path'     => '/',
@@ -230,96 +204,194 @@ class SessionManager
             'samesite' => 'Lax',
         ];
 
-        $settings = array_merge($defaults, $params);
+        session_set_cookie_params(array_merge($defaults, $params));
+    }
 
-        session_set_cookie_params($settings);
+    // =========================================================================
+    // CSRF protection
+    // =========================================================================
+
+    /**
+     * Generate a new CSRF token, store it in the session, and return it.
+     * Up to $maxTokens are kept simultaneously (oldest removed when limit reached).
+     */
+    public function generateCsrfToken(): string
+    {
+        $token     = bin2hex(random_bytes($this->tokenLength));
+        $timestamp = time();
+
+        if (!isset($_SESSION[$this->csrfTokenKey]) || !is_array($_SESSION[$this->csrfTokenKey])) {
+            $_SESSION[$this->csrfTokenKey] = [];
+        }
+
+        if (count($_SESSION[$this->csrfTokenKey]) >= $this->maxTokens) {
+            asort($_SESSION[$this->csrfTokenKey]);
+            array_shift($_SESSION[$this->csrfTokenKey]);
+        }
+
+        $_SESSION[$this->csrfTokenKey][$token] = $timestamp;
+
+        return $token;
     }
 
     /**
-     * Redirect to a specified URL.
+     * Verify a CSRF token against the session store.
      *
-     * @param string $url The URL to redirect to.
-     * @return void
+     * If $token is empty, falls back to the X-CSRF-TOKEN request header
+     * automatically — this supports AJAX requests that send the token as a header
+     * instead of a POST field.
+     *
+     * @param string $token The token to verify (from $_POST or empty for header fallback).
+     * @return bool True if valid and not expired.
      */
-    public function redirect($url)
+    public function verifyCsrfToken(string $token = ''): bool
     {
-        header("Location: $url");
+        if (!$token) {
+            $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+        }
+
+        $currentTime = time();
+
+        if (isset($_SESSION[$this->csrfTokenKey][$token])) {
+            $tokenTime = $_SESSION[$this->csrfTokenKey][$token];
+
+            if (($currentTime - $tokenTime) <= $this->tokenExpiry) {
+                $this->cleanUpCsrfTokens();
+                return true;
+            }
+
+            unset($_SESSION[$this->csrfTokenKey][$token]);
+            $this->cleanUpCsrfTokens();
+            return false;
+        }
+
+        $this->cleanUpCsrfTokens();
+        return false;
+    }
+
+    /**
+     * CSRF middleware. Call at the top of any POST-handling page or route.
+     *
+     * On failure:
+     * - AJAX / JSON requests  → HTTP 403 JSON response then exit.
+     * - Regular form requests → flash error message, redirect to $redirectOnFail, then exit.
+     *
+     * @param string $redirectOnFail URL to redirect to on CSRF failure (regular forms only).
+     */
+    public function csrfMiddleware(string $redirectOnFail = '/'): void
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return;
+        }
+
+        $token = $_POST['_csrf_token'] ?? '';
+
+        if ($this->verifyCsrfToken($token)) {
+            return;
+        }
+
+        $isAjax = (
+            ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest' ||
+            str_contains($_SERVER['HTTP_ACCEPT']       ?? '', 'application/json') ||
+            str_contains($_SERVER['CONTENT_TYPE']      ?? '', 'application/json')
+        );
+
+        if ($isAjax) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'CSRF token invalid or expired.']);
+            exit();
+        }
+
+        $this->flashError('Your session has expired. Please try again.');
+        header('Location: ' . $redirectOnFail);
         exit();
     }
 
     /**
-     * Send a JSON error response and exit.
-     *
-     * @param string $message The error message.
-     * @return void
+     * Remove expired tokens from the CSRF token store.
      */
-    public function setJsonErrorMessage($message)
+    protected function cleanUpCsrfTokens(): void
     {
-        header('Content-Type: application/json');
-        echo json_encode(['status' => 'error', 'msg' => $message]);
-        exit();
-    }
+        $currentTime = time();
 
-    /**
-     * Send a JSON success response and exit.
-     *
-     * @param string $message The success message.
-     * @param array  $data    Additional data.
-     * @return void
-     */
-    public function setJsonSuccessMessage($message, $data = [])
-    {
-        header('Content-Type: application/json');
-        echo json_encode(['status' => 'success', 'msg' => $message, 'data' => $data]);
-        exit();
-    }
-
-    /**
-     * Middleware to verify CSRF tokens on POST requests.
-     *
-     * @return void
-     */
-    public function csrfMiddleware()
-    {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $token = $_POST['_csrf_token'] ?? '';
-
-            if (!$this->verifyCsrfToken($token)) {
-                $this->setErrorMessage('Invalid CSRF token.', '/');
+        if (isset($_SESSION[$this->csrfTokenKey]) && is_array($_SESSION[$this->csrfTokenKey])) {
+            foreach ($_SESSION[$this->csrfTokenKey] as $token => $timestamp) {
+                if (($currentTime - $timestamp) > $this->tokenExpiry) {
+                    unset($_SESSION[$this->csrfTokenKey][$token]);
+                }
             }
         }
     }
 
+    // =========================================================================
+    // Flash messages
+    // =========================================================================
+
     /**
-     * Set an error message and optionally redirect.
+     * Store a flash message in the session.
+     * Flash messages are retrieved once via getFlashMessages() and then cleared.
      *
-     * @param string $message  The error message.
-     * @param string $redirect URL to redirect to.
-     * @return void
+     * @param string $type    One of: 'success', 'error', 'info', 'warning'.
+     * @param string $message The message text.
+     * @param array  $data    Optional extra data attached to the message.
      */
-    public function setErrorMessage($message, $redirect = '')
+    public function setFlashMessage(string $type, string $message, array $data = []): void
     {
-        $this->setFlashMessage('error', $message);
-        if (!empty($redirect)) {
-            $this->redirect($redirect);
+        $allowedTypes = ['success', 'error', 'info', 'warning'];
+
+        if (!in_array($type, $allowedTypes)) {
+            $type = 'info';
         }
+
+        $_SESSION[$this->flashMessageKey][] = [
+            'type'    => $type,
+            'message' => $message,
+            'data'    => $data,
+        ];
     }
 
     /**
-     * Set a success message and optionally redirect.
+     * Retrieve all pending flash messages and clear them from the session.
      *
-     * @param string $message  The success message.
-     * @param string $redirect URL to redirect to.
-     * @param array  $data     Additional data.
-     * @return void
+     * @return array Array of ['type', 'message', 'data'] entries.
      */
-    public function setSuccessMessage($message, $redirect = '', $data = [])
+    public function getFlashMessages(): array
+    {
+        $messages = $_SESSION[$this->flashMessageKey] ?? [];
+        unset($_SESSION[$this->flashMessageKey]);
+        return $messages;
+    }
+
+    /**
+     * Store an error flash message.
+     */
+    public function flashError(string $message, array $data = []): void
+    {
+        $this->setFlashMessage('error', $message, $data);
+    }
+
+    /**
+     * Store a success flash message.
+     */
+    public function flashSuccess(string $message, array $data = []): void
     {
         $this->setFlashMessage('success', $message, $data);
-        if (!empty($redirect)) {
-            $this->redirect($redirect);
-        }
+    }
+
+    /**
+     * Store an info flash message.
+     */
+    public function flashInfo(string $message, array $data = []): void
+    {
+        $this->setFlashMessage('info', $message, $data);
+    }
+
+    /**
+     * Store a warning flash message.
+     */
+    public function flashWarning(string $message, array $data = []): void
+    {
+        $this->setFlashMessage('warning', $message, $data);
     }
 }
-
-
