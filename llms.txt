@@ -179,8 +179,8 @@ max(string $col): mixed
 exists(): bool
 insert(array $data): bool
 insertGetId(array $data): int|false
-insertIgnore(array $data): bool        — insert, skip on duplicate key
-upsert(array $data, array $updateColumns): bool  — insert or update on duplicate
+insertOrIgnore(array $data): bool      — insert, skip on duplicate key
+upsert(array $data, array $uniqueKeys = []): bool  — insert or update on duplicate key
 update(array $data): int               — returns affected rows
 increment(string $col, int $amount = 1): int
 decrement(string $col, int $amount = 1): int
@@ -195,7 +195,7 @@ chunk(int $size, callable $callback): void
 transaction(callable $callback): mixed
 beginTransaction(): void
 commit(): void
-rollback(): void
+rollBack(): void
 
 ### Raw queries (use sparingly)
 
@@ -298,8 +298,8 @@ Post::count(): int
 Post::exists(int $id): bool
 Post::insert(array $data): bool
 Post::create(array $data): int         — insert and return last insert ID
-Post::update(array $data, int $id): int  — data first, id second
-Post::destroy(int $id): int
+Post::update(array $data, int $id): bool  — data first, id second
+Post::destroy(int $id): bool
 
 ```php
 // Basic operations
@@ -330,33 +330,33 @@ Configuration required in jiconfig.php:
   'auth_token_table' => 'tokens',
 
 ### User auth
-loginUser(string $email, string $password, bool $remember = false): bool
-logoutUser(): void
-isLoggedIn(): bool
+userLogin(string $email, string $password, bool $remember = false): bool
+userLogout(): void
+isUserLoggedIn(): bool
 getUser(): ?array
 getUserId(): ?int
-loginUserById(int $id, bool $remember = false): bool
+userLoginById(int $id): bool
 
 ### Admin auth
-loginAdmin(string $email, string $password, bool $remember = false): bool
-logoutAdmin(): void
+adminLogin(string $email, string $password, bool $remember = false): bool
+adminLogout(): void
 isAdminLoggedIn(): bool
 getAdmin(): ?array
 getAdminId(): ?int
-loginAdminById(int $id, bool $remember = false): bool
+adminLoginById(int $id): bool
 
 ```php
 $auth = $app->auth;
 
 // Login
-if ($auth->loginUser($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
+if ($auth->userLogin($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
     $app->redirect('/dashboard');
 } else {
     $error = 'Invalid credentials';
 }
 
 // Guard a page
-if (!$auth->isLoggedIn()) {
+if (!$auth->isUserLoggedIn()) {
     $app->redirect('/login');
 }
 
@@ -365,7 +365,7 @@ $user   = $auth->getUser();
 $userId = $auth->getUserId();
 
 // Logout
-$auth->logoutUser();
+$auth->userLogout();
 $app->redirect('/login');
 ```
 
@@ -431,7 +431,7 @@ errors(): array                        — ['field' => ['error1', 'error2']]
 first(string $field = null): string|array
 throw(): void                          — throws ValidationException if fails
 stopOnFirstFailure(bool $stop = true): Validator
-addRule(string $name, callable $fn, string $message): Validator
+addRule(string $name, callable $fn): Validator
 addMessages(array $messages): Validator
 
 ### Quick single-value check
@@ -493,15 +493,15 @@ $v = $val->make($_POST, [
 
 ## ROUTER ($router = $app->router — requires router_enabled => true)
 
-get(string $path, string|callable $handler): void
-post(string $path, string|callable $handler): void
-put(string $path, string|callable $handler): void
-delete(string $path, string|callable $handler): void
-patch(string $path, string|callable $handler): void
-any(string $path, string|callable $handler): void
-match(array $methods, string $path, string|callable $handler): void
-redirect(string $from, string $to, int $code = 302): void
-group(array $options, callable $callback): void  — options: prefix
+get(string $path, string|callable $handler): static
+post(string $path, string|callable $handler): static
+put(string $path, string|callable $handler): static
+delete(string $path, string|callable $handler): static
+patch(string $path, string|callable $handler): static
+any(string $path, string|callable $handler): static
+match(array $methods, string $path, string|callable $handler): static
+redirect(string $from, string $to, int $code = 302): static
+group(string $prefix, callable $callback): static
 dispatch(): void  — MUST be called at end of index.php
 
 URL params: {name} syntax — available as $name in file handlers
@@ -523,10 +523,10 @@ $router->post('/login', function () use ($app) {
     $app->json(401, ['error' => 'Invalid credentials']);
 });
 
-$router->group(['prefix' => '/admin'], function ($r) {
+$router->group('/admin', function ($r) {
     $r->get('/dashboard', 'pages/admin/dashboard.php');
     $r->get('/users',     'pages/admin/users.php');
-    $r->group(['prefix' => '/reports'], function ($r) {
+    $r->group('/reports', function ($r) {
         $r->get('/monthly', 'pages/admin/reports/monthly.php');
     });
 });
@@ -642,7 +642,7 @@ Auto-enforced at every request boot. Manual methods for admin tooling only.
 enforceRateLimit(): void
 getRemainingRequests(string $ip = null): int
 isBannedIp(string $ip): bool
-banIp(string $ip, int $duration = null): void
+banIp(string $ip, ?int $duration = null): bool
 unbanIp(string $ip): void
 getBanInfo(string $ip): ?array         — ['ip', 'ban_expires', 'seconds_remaining'] or null
 resetIp(string $ip): bool
@@ -662,14 +662,9 @@ $info = $limiter->getBanInfo('1.2.3.4');
 
 Auto-enforced at boot. Manual methods for admin tooling.
 
-isIpBlocked(string $ip): bool
+isAccessAllowed(): bool  — returns false if IP or country is blocked
 blockIp(string $ip): bool
 unblockIp(string $ip): bool
-getBlockedIps(): array
-isCountryBlocked(string $countryCode): string  — 'blocked'|'allowed'|'unknown'
-blockCountry(string $countryCode): bool
-unblockCountry(string $countryCode): bool
-getBlockedCountries(): array
 
 ---
 
@@ -947,7 +942,7 @@ isRunning(): bool
 getElapsedTime(): float                — seconds
 getElapsedTimeInMilliseconds(): float
 getElapsedTimeInMicroseconds(): float
-static measure(callable $fn, mixed ...$args): float  — returns seconds taken
+static measure(callable $fn, mixed ...$args): array  — returns ['result' => mixed, 'elapsed_time' => float, 'elapsed_ms' => float]
 
 ```php
 $timer = $app->executionTimer;
@@ -960,9 +955,12 @@ $log->debug('Query took {ms}ms', ['ms' => $ms]);
 
 // Inline measurement
 use JiFramework\Core\Utilities\ExecutionTimer;
-$seconds = ExecutionTimer::measure(function() use ($db) {
+$result  = ExecutionTimer::measure(function() use ($db) {
     return $db->table('big_table')->get();
 });
+// $result['result']      — return value of the callback
+// $result['elapsed_time'] — seconds (float)
+// $result['elapsed_ms']   — milliseconds (float)
 ```
 
 ---
@@ -1028,11 +1026,12 @@ $valid   = $url->isValid('https://example.com');
 ## LOCALIZATION ($lang = $app->language — requires multi_lang => true)
 
 translate(string $key, array $replacements = []): string
-t(string $key, array $replacements = []): string  — alias
-setLanguage(string $lang): void
-getLanguage(): string
-getSupportedLanguages(): array
+setLanguage(string $lang): bool
+getCurrentLanguageCode(): string
+getAvailableLanguages(): array
 hasTranslation(string $key): bool
+getCurrentLanguageInfo(): array|null
+isCurrentLanguageRTL(): bool
 
 Lang files: JSON in lang/ directory (lang/en.json, lang/ar.json, etc.)
 ```json
@@ -1042,10 +1041,12 @@ Lang files: JSON in lang/ directory (lang/en.json, lang/ar.json, etc.)
 ```php
 $lang = $app->language;
 
-echo $lang->t('welcome', ['name' => 'Alice']);  // 'Welcome, Alice!'
-echo $lang->t('logout');
+echo $lang->translate('welcome', ['name' => 'Alice']);  // 'Welcome, Alice!'
+echo $lang->translate('logout');
 $lang->setLanguage('ar');
-$current = $lang->getLanguage();
+$current = $lang->getCurrentLanguageCode();
+$langs   = $lang->getAvailableLanguages();
+$isRtl   = $lang->isCurrentLanguageRTL();
 ```
 
 ---
@@ -1111,7 +1112,7 @@ $pager   = $app->paginator;
 $log     = $app->logger;
 
 // Guard
-if (!$auth->isLoggedIn()) {
+if (!$auth->isUserLoggedIn()) {
     $app->redirect('/login');
 }
 
@@ -1190,7 +1191,7 @@ $auth    = $app->auth;
 $session = $app->sessionManager;
 $val     = $app->validator;
 
-if ($auth->isLoggedIn()) {
+if ($auth->isUserLoggedIn()) {
     $app->redirect('/dashboard');
 }
 
@@ -1206,7 +1207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($v->fails()) {
         $error = $v->first('email') ?: $v->first('password');
-    } elseif ($auth->loginUser($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
+    } elseif ($auth->userLogin($_POST['email'], $_POST['password'], isset($_POST['remember']))) {
         $session->flashSuccess('Welcome back!');
         $app->redirect('/dashboard');
     } else {
